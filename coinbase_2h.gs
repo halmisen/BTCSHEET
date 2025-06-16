@@ -11,7 +11,7 @@ function getSheet() {
 }
 
 function fetchLatestCandle(product) {
-  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=7200&limit=1';
+  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=3600&limit=2';
   var options = {headers: {Accept: 'application/json'}};
   try {
     var response = UrlFetchApp.fetch(url, options);
@@ -20,11 +20,21 @@ function fetchLatestCandle(product) {
       return null;
     }
     var data = JSON.parse(response.getContentText());
-    if (!data || data.length === 0) {
-      Logger.log('Empty data for ' + product);
+    if (!data || data.length < 2) {
+      Logger.log('Insufficient data for ' + product);
       return null;
     }
-    return data[0];
+    data.sort(function(a, b) { return a[0] - b[0]; });
+    var c1 = data[data.length - 2];
+    var c2 = data[data.length - 1];
+    return [
+      c1[0],
+      Math.min(c1[1], c2[1]),
+      Math.max(c1[2], c2[2]),
+      c1[3],
+      c2[4],
+      (c1[5] || 0) + (c2[5] || 0)
+    ];
   } catch (e) {
     Logger.log('Error fetching ' + product + ': ' + e);
     return null;
@@ -32,7 +42,7 @@ function fetchLatestCandle(product) {
 }
 
 function fetchCandles(product, limit) {
-  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=7200&limit=' + limit;
+  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=3600&limit=' + (limit * 2);
   var options = {headers: {Accept: 'application/json'}};
   try {
     var response = UrlFetchApp.fetch(url, options);
@@ -43,7 +53,20 @@ function fetchCandles(product, limit) {
     var data = JSON.parse(response.getContentText());
     if (!data) return [];
     data.sort(function(a, b) { return a[0] - b[0]; });
-    return data;
+    var result = [];
+    for (var i = 0; i + 1 < data.length && result.length < limit; i += 2) {
+      var c1 = data[i];
+      var c2 = data[i + 1];
+      result.push([
+        c1[0],
+        Math.min(c1[1], c2[1]),
+        Math.max(c1[2], c2[2]),
+        c1[3],
+        c2[4],
+        (c1[5] || 0) + (c2[5] || 0)
+      ]);
+    }
+    return result;
   } catch (e) {
     Logger.log('Error fetching history for ' + product + ': ' + e);
     return [];
