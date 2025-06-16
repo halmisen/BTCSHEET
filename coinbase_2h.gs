@@ -1,6 +1,8 @@
 // Google Apps Script for fetching Coinbase 2h prices
 
-var HISTORY_ROWS = 12; // number of 2h candles to fetch when initializing
+const GRANULARITY_SECONDS = 3600;   // 1h candle
+const TWO_HOUR_CANDLES   = 13;      // Data table keeps 13 two hour candles
+const DAILY_RESET_HOUR   = 8;       // daily sheet rollover time
 
 function formatTs(ts) {
   return Utilities.formatDate(new Date(ts * 1000), Session.getScriptTimeZone(),
@@ -12,13 +14,13 @@ function getSheet() {
   var sheet = ss.getSheetByName('Data');
   if (!sheet) {
     sheet = ss.insertSheet('Data');
-    sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL']);
+    sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
   }
   return sheet;
 }
 
 function fetchLatestCandle(product) {
-  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=3600&limit=2';
+  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=' + GRANULARITY_SECONDS + '&limit=2';
   var options = {headers: {Accept: 'application/json'}};
   try {
     var response = UrlFetchApp.fetch(url, options);
@@ -48,8 +50,8 @@ function fetchLatestCandle(product) {
   }
 }
 
-function fetchCandles(product, limit) {
-  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=3600&limit=' + (limit * 2);
+function fetchRecent2hCandles(product, limit) {
+  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=' + GRANULARITY_SECONDS + '&limit=' + (limit * 2);
   var options = {headers: {Accept: 'application/json'}};
   try {
     var response = UrlFetchApp.fetch(url, options);
@@ -80,51 +82,41 @@ function fetchCandles(product, limit) {
   }
 }
 
-function update2hPrices() {
-  var sheet = getSheet();
-  var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
-  var prices = [];
-  var timestamp = null;
-  for (var i = 0; i < products.length; i++) {
-    var candle = fetchLatestCandle(products[i]);
-    if (!timestamp && candle) {
-      timestamp = candle[0];
+function fetchHistorical2hCandles(product, startIso, endIso) {
+  var url = 'https://api.exchange.coinbase.com/products/' + product +
+    '/candles?granularity=7200&start=' + startIso + '&end=' + endIso;
+  var options = {headers: {Accept: 'application/json'}};
+  try {
+    var response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() !== 200) {
+      Logger.log('HTTP ' + response.getResponseCode() + ' for history ' + product);
+      return [];
     }
-    if (candle && candle[4] != null) {
-      prices.push(parseFloat(candle[4]));
-    } else {
-      Logger.log('Missing price for ' + products[i]);
-      prices.push('N/A');
-    }
+    var data = JSON.parse(response.getContentText());
+    if (!data) return [];
+    data.sort(function(a, b) { return a[0] - b[0]; });
+    return data;
+  } catch (e) {
+    Logger.log('Error fetching history for ' + product + ': ' + e);
+    return [];
   }
-  if (!timestamp) {
-    return {timestamp: null, prices: prices};
-  }
-  var formatted = formatTs(timestamp);
-  var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) {
-    initHistory();
-    lastRow = sheet.getLastRow();
-  }
-  var lastTimestampStr = lastRow > 1 ? sheet.getRange(lastRow, 1).getValue() : '';
-  var lastTimestampMs = lastTimestampStr ? new Date(lastTimestampStr).getTime() : 0;
-  if (timestamp * 1000 > lastTimestampMs) {
-    sheet.appendRow([formatted].concat(prices));
-  }
-  return {timestamp: formatted, prices: prices};
 }
 
-function initHistory() {
+function update2hPrices() {
   var sheet = getSheet();
-  sheet.clear();
-  sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL']);
+  var rows = sheet.getLastRow();
+  if (rows > TWO_HOUR_CANDLES + 1 || rows < 2) {
+    sheet.clear();
+    sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+  }
 
   var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   var data = {};
   for (var i = 0; i < products.length; i++) {
-    data[products[i]] = fetchCandles(products[i], HISTORY_ROWS);
+    data[products[i]] = fetchRecent2hCandles(products[i], TWO_HOUR_CANDLES);
   }
-  for (var j = 0; j < HISTORY_ROWS; j++) {
+
+  for (var j = 0; j < TWO_HOUR_CANDLES; j++) {
     var ts = data['BTC-USD'][j] ? formatTs(data['BTC-USD'][j][0]) : '';
     var row = [
       ts,
@@ -133,10 +125,110 @@ function initHistory() {
       data['ETH-USD'][j] && data['ETH-USD'][j][4] != null ?
         parseFloat(data['ETH-USD'][j][4]) : 'N/A',
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
-        parseFloat(data['SOL-USD'][j][4]) : 'N/A'
+        parseFloat(data['SOL-USD'][j][4]) : 'N/A',
+      ''
+    ];
+    if (sheet.getLastRow() >= j + 2) {
+      sheet.getRange(j + 2, 1, 1, 5).setValues([row]);
+    } else {
+      sheet.appendRow(row);
+    }
+  }
+
+  var extra = sheet.getLastRow() - (TWO_HOUR_CANDLES + 1);
+  if (extra > 0) {
+    sheet.deleteRows(TWO_HOUR_CANDLES + 2, extra);
+  }
+}
+
+function initHistory() {
+  var sheet = getSheet();
+  sheet.clear();
+  sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+
+  var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
+  var data = {};
+  for (var i = 0; i < products.length; i++) {
+    data[products[i]] = fetchRecent2hCandles(products[i], TWO_HOUR_CANDLES);
+  }
+  for (var j = 0; j < TWO_HOUR_CANDLES; j++) {
+    var ts = data['BTC-USD'][j] ? formatTs(data['BTC-USD'][j][0]) : '';
+    var row = [
+      ts,
+      data['BTC-USD'][j] && data['BTC-USD'][j][4] != null ?
+        parseFloat(data['BTC-USD'][j][4]) : 'N/A',
+      data['ETH-USD'][j] && data['ETH-USD'][j][4] != null ?
+        parseFloat(data['ETH-USD'][j][4]) : 'N/A',
+      data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
+        parseFloat(data['SOL-USD'][j][4]) : 'N/A',
+      ''
     ];
     sheet.appendRow(row);
   }
+}
+
+function backfillHistory(startDate, endDate) {
+  var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetName = 'History_' + startDate + '_to_' + endDate;
+  var exist = ss.getSheetByName(sheetName);
+  if (exist) ss.deleteSheet(exist);
+  var sheet = ss.insertSheet(sheetName);
+  sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+
+  var start = new Date(startDate + 'T00:00:00Z');
+  var end = new Date(endDate + 'T00:00:00Z');
+  end.setDate(end.getDate() + 1);
+
+  var batchSeconds = 7200 * 350;
+  var data = {};
+  for (var i = 0; i < products.length; i++) {
+    data[products[i]] = [];
+  }
+
+  for (var t = start.getTime(); t < end.getTime(); ) {
+    var batchEnd = Math.min(t + batchSeconds * 1000, end.getTime());
+    var sIso = new Date(t).toISOString();
+    var eIso = new Date(batchEnd).toISOString();
+    for (var p = 0; p < products.length; p++) {
+      data[products[p]] = data[products[p]].concat(
+        fetchHistorical2hCandles(products[p], sIso, eIso)
+      );
+      Utilities.sleep(350);
+    }
+    t = batchEnd;
+  }
+
+  var allTs = {};
+  products.forEach(function(pr) {
+    data[pr].forEach(function(c) {
+      if (!allTs[c[0]]) allTs[c[0]] = {};
+      allTs[c[0]][pr] = parseFloat(c[4]);
+    });
+  });
+
+  var tsList = Object.keys(allTs).map(Number).sort(function(a, b) { return a - b; });
+  tsList.forEach(function(ts) {
+    var row = [formatTs(ts)];
+    products.forEach(function(pr) {
+      row.push(allTs[ts][pr] != null ? allTs[ts][pr] : 'N/A');
+    });
+    row.push('');
+    sheet.appendRow(row);
+  });
+}
+
+function rolloverDailySheet() {
+  update2hPrices();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var dataSheet = getSheet();
+  var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var existing = ss.getSheetByName(today);
+  if (existing) ss.deleteSheet(existing);
+  dataSheet.copyTo(ss).setName(today);
+  dataSheet.clear();
+  dataSheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+  update2hPrices();
 }
 
 (function() {
