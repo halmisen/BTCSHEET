@@ -3,6 +3,7 @@
 const GRANULARITY_SECONDS = 3600;   // 1h candle
 const TWO_HOUR_CANDLES   = 13;      // Data table keeps 13 two hour candles
 const DAILY_RESET_HOUR   = 8;       // daily sheet rollover time
+const HEADERS = ['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ2h', 'Δ4h', 'Δ8h', 'Δ12h', 'Δ24h'];
 
 function formatTs(ts) {
   return Utilities.formatDate(new Date(ts * 1000), Session.getScriptTimeZone(),
@@ -14,7 +15,7 @@ function getSheet() {
   var sheet = ss.getSheetByName('Data');
   if (!sheet) {
     sheet = ss.insertSheet('Data');
-    sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+    sheet.appendRow(HEADERS);
   }
   return sheet;
 }
@@ -104,11 +105,6 @@ function fetchHistorical2hCandles(product, startIso, endIso) {
 
 function update2hPrices() {
   var sheet = getSheet();
-  var rows = sheet.getLastRow();
-  if (rows > TWO_HOUR_CANDLES + 1 || rows < 2) {
-    sheet.clear();
-    sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
-  }
 
   var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   var data = {};
@@ -125,26 +121,22 @@ function update2hPrices() {
       data['ETH-USD'][j] && data['ETH-USD'][j][4] != null ?
         parseFloat(data['ETH-USD'][j][4]) : 'N/A',
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
-        parseFloat(data['SOL-USD'][j][4]) : 'N/A',
-      ''
+        parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
-    if (sheet.getLastRow() >= j + 2) {
-      sheet.getRange(j + 2, 1, 1, 5).setValues([row]);
-    } else {
-      sheet.appendRow(row);
-    }
+    sheet.getRange(j + 2, 1, 1, 4).setValues([row]);
   }
 
   var extra = sheet.getLastRow() - (TWO_HOUR_CANDLES + 1);
   if (extra > 0) {
     sheet.deleteRows(TWO_HOUR_CANDLES + 2, extra);
   }
+  return {timestamp: formatTs(Date.now()/1000)};
 }
 
 function initHistory() {
   var sheet = getSheet();
   sheet.clear();
-  sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+  sheet.appendRow(HEADERS);
 
   var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   var data = {};
@@ -160,9 +152,9 @@ function initHistory() {
       data['ETH-USD'][j] && data['ETH-USD'][j][4] != null ?
         parseFloat(data['ETH-USD'][j][4]) : 'N/A',
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
-        parseFloat(data['SOL-USD'][j][4]) : 'N/A',
-      ''
+        parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
+    for (var k = 0; k < 5; k++) row.push('');
     sheet.appendRow(row);
   }
 }
@@ -174,7 +166,7 @@ function backfillHistory(startDate, endDate) {
   var exist = ss.getSheetByName(sheetName);
   if (exist) ss.deleteSheet(exist);
   var sheet = ss.insertSheet(sheetName);
-  sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+  sheet.appendRow(HEADERS);
 
   var start = new Date(startDate + 'T00:00:00Z');
   var end = new Date(endDate + 'T00:00:00Z');
@@ -213,13 +205,12 @@ function backfillHistory(startDate, endDate) {
     products.forEach(function(pr) {
       row.push(allTs[ts][pr] != null ? allTs[ts][pr] : 'N/A');
     });
-    row.push('');
+    for (var k = 0; k < 5; k++) row.push('');
     sheet.appendRow(row);
   });
 }
 
 function rolloverDailySheet() {
-  update2hPrices();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var dataSheet = getSheet();
   var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
@@ -227,15 +218,6 @@ function rolloverDailySheet() {
   if (existing) ss.deleteSheet(existing);
   dataSheet.copyTo(ss).setName(today);
   dataSheet.clear();
-  dataSheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ']);
+  dataSheet.appendRow(HEADERS);
   update2hPrices();
 }
-
-(function() {
-  try {
-    var result = update2hPrices();
-    console.log(result);
-  } catch (e) {
-    console.log(e);
-  }
-})();

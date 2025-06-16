@@ -29,8 +29,15 @@ backfillHistory('2025-01-01','2025-03-31');
 
 Use the Triggers panel to add two timed triggers:
 
-- `update2hPrices` — every **2 h**
-- `rolloverDailySheet` — daily at **DAILY_RESET_HOUR:00**
+- `update2hPrices` — every **2 h**
+- `rolloverDailySheet` — daily at **DAILY_RESET_HOUR:00**
 
-At the end of the script a small sandbox executes `update2hPrices()` once and
-logs the result to verify the script runs without errors.
+Example formulas for the five Δ columns (row 2):
+
+```text
+E2: =IFERROR((B2-B3)/B3, "")
+F2: =IFERROR((B2-B5)/B5, "")
+G2: =IFERROR((B2-B9)/B9, "")
+H2: =IFERROR((B2-B13)/B13, "")
+I2: =IFERROR((B2-B14)/B14, "")
+```
