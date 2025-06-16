@@ -1,5 +1,12 @@
 // Google Apps Script for fetching Coinbase 2h prices
 
+var HISTORY_ROWS = 12; // number of 2h candles to fetch when initializing
+
+function formatTs(ts) {
+  return Utilities.formatDate(new Date(ts * 1000), Session.getScriptTimeZone(),
+    'yyyy-MM-dd HH:mm');
+}
+
 function getSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('Data');
@@ -81,23 +88,33 @@ function update2hPrices() {
   for (var i = 0; i < products.length; i++) {
     var candle = fetchLatestCandle(products[i]);
     if (!timestamp && candle) {
-      timestamp = candle[0] * 1000;
+      timestamp = candle[0];
     }
-    prices.push(candle ? parseFloat(candle[4]) : 'N/A');
+    if (candle && candle[4] != null) {
+      prices.push(parseFloat(candle[4]));
+    } else {
+      Logger.log('Missing price for ' + products[i]);
+      prices.push('N/A');
+    }
   }
   if (!timestamp) {
     return {timestamp: null, prices: prices};
   }
+  var formatted = formatTs(timestamp);
   var lastRow = sheet.getLastRow();
-  var lastTimestamp = lastRow > 1 ? sheet.getRange(lastRow, 1).getValue() : 0;
-  if (timestamp > lastTimestamp) {
-    sheet.appendRow([timestamp].concat(prices));
+  if (lastRow <= 1) {
+    initHistory();
+    lastRow = sheet.getLastRow();
   }
-  return {timestamp: timestamp, prices: prices};
+  var lastTimestampStr = lastRow > 1 ? sheet.getRange(lastRow, 1).getValue() : '';
+  var lastTimestampMs = lastTimestampStr ? new Date(lastTimestampStr).getTime() : 0;
+  if (timestamp * 1000 > lastTimestampMs) {
+    sheet.appendRow([formatted].concat(prices));
+  }
+  return {timestamp: formatted, prices: prices};
 }
 
-function initHistory(limit) {
-  limit = limit || 100;
+function initHistory() {
   var sheet = getSheet();
   sheet.clear();
   sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL']);
@@ -105,15 +122,18 @@ function initHistory(limit) {
   var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   var data = {};
   for (var i = 0; i < products.length; i++) {
-    data[products[i]] = fetchCandles(products[i], limit);
+    data[products[i]] = fetchCandles(products[i], HISTORY_ROWS);
   }
-  for (var j = 0; j < limit; j++) {
-    var ts = data['BTC-USD'][j] ? data['BTC-USD'][j][0] * 1000 : '';
+  for (var j = 0; j < HISTORY_ROWS; j++) {
+    var ts = data['BTC-USD'][j] ? formatTs(data['BTC-USD'][j][0]) : '';
     var row = [
       ts,
-      data['BTC-USD'][j] ? parseFloat(data['BTC-USD'][j][4]) : 'N/A',
-      data['ETH-USD'][j] ? parseFloat(data['ETH-USD'][j][4]) : 'N/A',
-      data['SOL-USD'][j] ? parseFloat(data['SOL-USD'][j][4]) : 'N/A'
+      data['BTC-USD'][j] && data['BTC-USD'][j][4] != null ?
+        parseFloat(data['BTC-USD'][j][4]) : 'N/A',
+      data['ETH-USD'][j] && data['ETH-USD'][j][4] != null ?
+        parseFloat(data['ETH-USD'][j][4]) : 'N/A',
+      data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
+        parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
     sheet.appendRow(row);
   }
