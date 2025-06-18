@@ -123,6 +123,18 @@ function update2hPrices() {
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
         parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
+    var btc = data['BTC-USD'];
+    var deltas = [];
+    var offs = [1, 2, 4, 6, 12];
+    for (var d = 0; d < offs.length; d++) {
+      var o = offs[d];
+      if (j >= o && btc[j] && btc[j - o] && btc[j][4] != null && btc[j - o][4] != null) {
+        deltas.push(parseFloat(btc[j][4]) - parseFloat(btc[j - o][4]));
+      } else {
+        deltas.push('');
+      }
+    }
+    row = row.concat(deltas);
     while (row.length < HEADERS.length) row.push('');
     if (sheet.getLastColumn() < HEADERS.length) {
       sheet.insertColumnsAfter(sheet.getLastColumn(), HEADERS.length - sheet.getLastColumn());
@@ -159,6 +171,18 @@ function initHistory() {
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
         parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
+    var btc = data['BTC-USD'];
+    var deltas = [];
+    var offs = [1, 2, 4, 6, 12];
+    for (var d = 0; d < offs.length; d++) {
+      var o = offs[d];
+      if (j >= o && btc[j] && btc[j - o] && btc[j][4] != null && btc[j - o][4] != null) {
+        deltas.push(parseFloat(btc[j][4]) - parseFloat(btc[j - o][4]));
+      } else {
+        deltas.push('');
+      }
+    }
+    row = row.concat(deltas);
     while (row.length < HEADERS.length) row.push('');
     sheet.getRange(j + 2, 1, 1, HEADERS.length).setValues([row]);
   }
