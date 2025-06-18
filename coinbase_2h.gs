@@ -244,65 +244,50 @@ function rolloverDailySheet() {
 }
 
 /**
- * Rebuild the change summary columns at the far right of the sheet.
- * All columns containing "Δ" are removed before new ones are appended.
- * Only the last row is populated with values showing the difference and
- * percent change against previous rows (2h,4h,12h,24h).
+ * Rebuild the price change summary table below the main data.
+ * The table shows the latest price difference and percent change compared to
+ * the rows 2h, 4h, 12h and 24h earlier. Existing summary rows are cleared
+ * before the new table is written.
  */
 function refreshLatestChanges() {
   var sheet = getSheet();
   var lastRow = sheet.getLastRow();
   if (lastRow <= 1) return; // nothing to summarise
 
-  // Remove existing change columns
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  for (var c = headers.length - 1; c >= 0; c--) {
-    if (String(headers[c]).indexOf('Δ') >= 0) {
-      sheet.deleteColumn(c + 1);
-    }
-  }
-
   // Detect coin columns after Timestamp
-  var coinHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var headerValues = sheet.getRange(1, 2, 1, sheet.getLastColumn() - 1).getValues()[0];
   var coins = [];
-  for (var i = 1; i < coinHeaders.length; i++) {
-    coins.push({ name: coinHeaders[i], col: i + 1 });
+  for (var i = 0; i < headerValues.length; i++) {
+    if (headerValues[i]) coins.push({ name: headerValues[i], col: i + 2 });
   }
 
   var offsets = [1, 2, 6, 12];
   var suffixes = ['Δ2h', 'Δ4h', 'Δ12h', 'Δ24h'];
 
-  // Build headers for summary columns
-  var summaryHeaders = [];
+  var startRow = lastRow + 2; // one blank row after data
+  var rows = coins.length + 1; // header + coins
+  var cols = suffixes.length + 1;
+  sheet.getRange(startRow, 1, rows, cols).clearContent();
+
+  var values = [];
+  values.push([''].concat(suffixes));
+
   coins.forEach(function(c) {
-    suffixes.forEach(function(suf) {
-      summaryHeaders.push(c.name + ' ' + suf);
-    });
-  });
-
-  var startCol = sheet.getLastColumn() + 1;
-  sheet.insertColumnsAfter(sheet.getLastColumn(), summaryHeaders.length);
-  sheet.getRange(1, startCol, 1, summaryHeaders.length).setValues([summaryHeaders]);
-
-  // Clear any existing data in summary columns except the last row
-  if (lastRow > 1) {
-    sheet.getRange(2, startCol, lastRow - 1, summaryHeaders.length).clearContent();
-  }
-
-  // Calculate change values for the last row
-  var out = [];
-  coins.forEach(function(c) {
+    var row = [c.name];
     var current = sheet.getRange(lastRow, c.col).getValue();
     offsets.forEach(function(off) {
       var prevRow = lastRow - off;
       if (prevRow >= 2) {
         var prev = sheet.getRange(prevRow, c.col).getValue();
-        out.push(formatChange(current, prev));
+        row.push(formatChange(current, prev));
       } else {
-        out.push('');
+        row.push('');
       }
     });
+    values.push(row);
   });
 
-  sheet.getRange(lastRow, startCol, 1, summaryHeaders.length).setValues([out]);
+  sheet.getRange(startRow, 1, values.length, values[0].length).setValues(values);
+  sheet.getRange(1, 1, 1, values[0].length)
+       .copyFormatToRange(sheet, 1, values[0].length, startRow, startRow);
 }
