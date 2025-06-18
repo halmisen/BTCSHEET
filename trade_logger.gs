@@ -21,7 +21,13 @@ function ensureTradeArea() {
   }
   if (!match) {
     headerRange.setValues([TRADE_HEADERS]);
-    var templates = 5;
+    try {
+      // Copy formatting from the sheet's first header row or row 20 if it exists
+      sheet.getRange(1, 1, 1, TRADE_HEADERS.length)
+        .copyFormatToRange(sheet, 1, TRADE_HEADERS.length,
+                           TRADE_START_ROW, TRADE_START_ROW);
+    } catch (err) {}
+    var templates = 5; // clear at least five blank rows
     sheet.getRange(TRADE_START_ROW + 1, 1, templates, TRADE_HEADERS.length)
          .clearContent();
   }
