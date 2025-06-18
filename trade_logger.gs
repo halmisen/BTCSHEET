@@ -3,7 +3,7 @@
 const DATA_SHEET_NAME = 'Data';
 const LEDGER_SHEET_NAME = 'Ledger';
 const TRADE_START_ROW = 20; // Row where trade headers begin
-const TRADE_HEADERS = ['Symbol', 'Side', 'Quantity', 'Price', 'Trade Time', 'Note'];
+const TRADE_HEADERS = ['Trade ID', 'Trade Time', 'Symbol', 'Side', 'Price', 'Quantity', 'Note'];
 
 /** Ensure trade area headers exist and add blank template rows */
 function ensureTradeArea() {
@@ -54,6 +54,19 @@ function ensureLedgerSheet() {
   return sheet;
 }
 
+/** Get the next available Trade ID from the Ledger sheet */
+function getNextTradeId() {
+  var sheet = ensureLedgerSheet();
+  var lastRow = sheet.getLastRow();
+  for (var r = lastRow; r >= 2; r--) {
+    var id = sheet.getRange(r, 1).getValue();
+    if (id !== '' && id != null) {
+      return (parseInt(id, 10) || 0) + 1;
+    }
+  }
+  return 1;
+}
+
 /** Add headers when the spreadsheet is opened */
 function onOpen(e) {
   ensureTradeArea();
@@ -71,9 +84,26 @@ function onEdit(e) {
     var row = range.getRow();
     if (row <= TRADE_START_ROW) return;
 
-    var values = sheet.getRange(row, 1, 1, TRADE_HEADERS.length).getValues()[0];
-    if (!values[0] || !values[1] || !values[2] || !values[3] || !values[4]) {
-      return; // require all mandatory fields
+    var rowRange = sheet.getRange(row, 1, 1, TRADE_HEADERS.length);
+    var values = rowRange.getValues()[0];
+
+    var symbol = values[2];
+    var side = values[3];
+    var price = values[4];
+    var qty = values[5];
+
+    if (!symbol || !side || !price || !qty) {
+      return; // require trade details
+    }
+
+    if (!values[0]) {
+      values[0] = getNextTradeId();
+      sheet.getRange(row, 1).setValue(values[0]);
+    }
+
+    if (!values[1]) {
+      values[1] = new Date();
+      sheet.getRange(row, 2).setValue(values[1]);
     }
 
     var ledger = ensureLedgerSheet();
