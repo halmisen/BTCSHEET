@@ -160,6 +160,8 @@ function update2hPrices() {
   if (extra > 0) {
     sheet.deleteRows(TWO_HOUR_CANDLES + 2, extra);
   }
+  // update summary row with newest values
+  updateLatestChanges();
   return { rows: TWO_HOUR_CANDLES, lastTs: lastTs };
 }
 
@@ -274,6 +276,10 @@ function updateLatestChanges() {
   var lastRow = sheet.getLastRow();
   if (lastRow <= 1) return;
 
+  // if a previous summary row exists, ignore it when reading data
+  var lastLabel = sheet.getRange(lastRow, 1).getValue();
+  var dataRow = lastLabel === 'Summary' ? lastRow - 1 : lastRow;
+
   var startCol = HEADERS.length + 1;
   var need = startCol + CHANGE_HEADERS.length - 1;
   if (sheet.getLastColumn() < need) {
@@ -285,9 +291,9 @@ function updateLatestChanges() {
   var cols = [2, 3, 4]; // BTC, ETH, SOL columns
   var out = [];
   for (var a = 0; a < cols.length; a++) {
-    var curr = sheet.getRange(lastRow, cols[a]).getValue();
+    var curr = sheet.getRange(dataRow, cols[a]).getValue();
     for (var o = 0; o < offsets.length; o++) {
-      var prevRow = lastRow - offsets[o];
+      var prevRow = dataRow - offsets[o];
       if (prevRow >= 2) {
         var prev = sheet.getRange(prevRow, cols[a]).getValue();
         out.push(formatChange(curr, prev));
@@ -296,5 +302,13 @@ function updateLatestChanges() {
       }
     }
   }
-  sheet.getRange(lastRow, startCol, 1, out.length).setValues([out]);
+
+  var summaryRow = dataRow + 1;
+  if (lastLabel !== 'Summary' && lastRow >= summaryRow) {
+    // insert summary row if it doesn't exist
+    sheet.insertRowsAfter(dataRow, 1);
+  }
+  sheet.getRange(summaryRow, 1, 1, need).clearContent();
+  sheet.getRange(summaryRow, 1).setValue('Summary');
+  sheet.getRange(summaryRow, startCol, 1, out.length).setValues([out]);
 }
