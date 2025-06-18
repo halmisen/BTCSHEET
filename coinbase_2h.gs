@@ -15,7 +15,7 @@ function getSheet() {
   var sheet = ss.getSheetByName('Data');
   if (!sheet) {
     sheet = ss.insertSheet('Data');
-    sheet.appendRow(HEADERS);
+    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
   }
   return sheet;
 }
@@ -112,6 +112,7 @@ function update2hPrices() {
     data[products[i]] = fetchRecent2hCandles(products[i], TWO_HOUR_CANDLES);
   }
 
+  var lastTs = '';
   for (var j = 0; j < TWO_HOUR_CANDLES; j++) {
     var ts = data['BTC-USD'][j] ? formatTs(data['BTC-USD'][j][0]) : '';
     var row = [
@@ -123,20 +124,25 @@ function update2hPrices() {
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
         parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
-    sheet.getRange(j + 2, 1, 1, 4).setValues([row]);
+    while (row.length < HEADERS.length) row.push('');
+    if (sheet.getLastColumn() < HEADERS.length) {
+      sheet.insertColumnsAfter(sheet.getLastColumn(), HEADERS.length - sheet.getLastColumn());
+    }
+    sheet.getRange(j + 2, 1, 1, HEADERS.length).setValues([row]);
+    lastTs = row[0];
   }
 
   var extra = sheet.getLastRow() - (TWO_HOUR_CANDLES + 1);
   if (extra > 0) {
     sheet.deleteRows(TWO_HOUR_CANDLES + 2, extra);
   }
-  return {timestamp: formatTs(Date.now()/1000)};
+  return { rows: TWO_HOUR_CANDLES, lastTs: lastTs };
 }
 
 function initHistory() {
   var sheet = getSheet();
   sheet.clear();
-  sheet.appendRow(HEADERS);
+  sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
 
   var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   var data = {};
@@ -154,8 +160,8 @@ function initHistory() {
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
         parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
-    for (var k = 0; k < 5; k++) row.push('');
-    sheet.appendRow(row);
+    while (row.length < HEADERS.length) row.push('');
+    sheet.getRange(j + 2, 1, 1, HEADERS.length).setValues([row]);
   }
 }
 
@@ -212,12 +218,17 @@ function backfillHistory(startDate, endDate) {
 
 function rolloverDailySheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var dataSheet = getSheet();
-  var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  var existing = ss.getSheetByName(today);
-  if (existing) ss.deleteSheet(existing);
-  dataSheet.copyTo(ss).setName(today);
-  dataSheet.clear();
-  dataSheet.appendRow(HEADERS);
+  var data = getSheet();
+  var today= Utilities.formatDate(new Date(), Session.getScriptTimeZone(),'yyyy-MM-dd');
+
+  // 归档旧表
+  var archived = data.copyTo(ss).setName(today);
+  SpreadsheetApp.flush();                      // 避免异步复制延迟
+
+  // 清空并重建 Data
+  data.clear();
+  data.getRange(1,1,1,HEADERS.length).setValues([HEADERS]);
+
+  // 立即填充 13 行
   update2hPrices();
 }
