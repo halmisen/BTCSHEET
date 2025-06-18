@@ -3,13 +3,8 @@
 const GRANULARITY_SECONDS = 3600;   // 1h candle
 const TWO_HOUR_CANDLES   = 13;      // Data table keeps 13 two hour candles
 const DAILY_RESET_HOUR   = 8;       // daily sheet rollover time
-const HEADERS = ['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ2h', 'Δ4h', 'Δ8h', 'Δ12h', 'Δ24h'];
-// Additional columns for latest change summary
-const CHANGE_HEADERS = [
-  'BTC Δ2h', 'BTC Δ4h', 'BTC Δ12h', 'BTC Δ24h',
-  'ETH Δ2h', 'ETH Δ4h', 'ETH Δ12h', 'ETH Δ24h',
-  'SOL Δ2h', 'SOL Δ4h', 'SOL Δ12h', 'SOL Δ24h'
-];
+// Columns holding raw prices only. Change columns are generated dynamically.
+const HEADERS = ['Timestamp', 'BTC', 'ETH', 'SOL'];
 
 function formatTs(ts) {
   return Utilities.formatDate(new Date(ts * 1000), Session.getScriptTimeZone(),
@@ -136,19 +131,7 @@ function update2hPrices() {
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
         parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
-    var btc = data['BTC-USD'];
-    var deltas = [];
-    var offs = [1, 2, 4, 6, 12];
-    for (var d = 0; d < offs.length; d++) {
-      var o = offs[d];
-      if (j >= o && btc[j] && btc[j - o] && btc[j][4] != null && btc[j - o][4] != null) {
-        deltas.push(parseFloat(btc[j][4]) - parseFloat(btc[j - o][4]));
-      } else {
-        deltas.push('');
-      }
-    }
-    row = row.concat(deltas);
-    while (row.length < HEADERS.length) row.push('');
+
     if (sheet.getLastColumn() < HEADERS.length) {
       sheet.insertColumnsAfter(sheet.getLastColumn(), HEADERS.length - sheet.getLastColumn());
     }
@@ -160,8 +143,8 @@ function update2hPrices() {
   if (extra > 0) {
     sheet.deleteRows(TWO_HOUR_CANDLES + 2, extra);
   }
-  // update summary row with newest values
-  updateLatestChanges();
+  // update summary columns with newest values
+  refreshLatestChanges();
   return { rows: TWO_HOUR_CANDLES, lastTs: lastTs };
 }
 
@@ -186,19 +169,9 @@ function initHistory() {
       data['SOL-USD'][j] && data['SOL-USD'][j][4] != null ?
         parseFloat(data['SOL-USD'][j][4]) : 'N/A'
     ];
-    var btc = data['BTC-USD'];
-    var deltas = [];
-    var offs = [1, 2, 4, 6, 12];
-    for (var d = 0; d < offs.length; d++) {
-      var o = offs[d];
-      if (j >= o && btc[j] && btc[j - o] && btc[j][4] != null && btc[j - o][4] != null) {
-        deltas.push(parseFloat(btc[j][4]) - parseFloat(btc[j - o][4]));
-      } else {
-        deltas.push('');
-      }
+    if (sheet.getLastColumn() < HEADERS.length) {
+      sheet.insertColumnsAfter(sheet.getLastColumn(), HEADERS.length - sheet.getLastColumn());
     }
-    row = row.concat(deltas);
-    while (row.length < HEADERS.length) row.push('');
     sheet.getRange(j + 2, 1, 1, HEADERS.length).setValues([row]);
   }
 }
@@ -249,7 +222,6 @@ function backfillHistory(startDate, endDate) {
     products.forEach(function(pr) {
       row.push(allTs[ts][pr] != null ? allTs[ts][pr] : 'N/A');
     });
-    for (var k = 0; k < 5; k++) row.push('');
     sheet.appendRow(row);
   });
 }
@@ -271,90 +243,66 @@ function rolloverDailySheet() {
   update2hPrices();
 }
 
-function updateLatestChanges() {
+/**
+ * Rebuild the change summary columns at the far right of the sheet.
+ * All columns containing "Δ" are removed before new ones are appended.
+ * Only the last row is populated with values showing the difference and
+ * percent change against previous rows (2h,4h,12h,24h).
+ */
+function refreshLatestChanges() {
   var sheet = getSheet();
   var lastRow = sheet.getLastRow();
   if (lastRow <= 1) return; // nothing to summarise
 
-  var lastLabel = sheet.getRange(lastRow, 1).getValue();
-  var dataRow = lastLabel === 'Summary' ? lastRow - 1 : lastRow;
-
-  // ensure summary headers exist and there are enough columns
-  var startCol = HEADERS.length + 1;
-  var required = startCol + CHANGE_HEADERS.length - 1;
-  if (sheet.getLastColumn() < required) {
-    sheet.insertColumnsAfter(sheet.getLastColumn(), required - sheet.getLastColumn());
+  // Remove existing change columns
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  for (var c = headers.length - 1; c >= 0; c--) {
+    if (String(headers[c]).indexOf('Δ') >= 0) {
+      sheet.deleteColumn(c + 1);
+    }
   }
-  sheet.getRange(1, startCol, 1, CHANGE_HEADERS.length).setValues([CHANGE_HEADERS]);
 
-  // columns holding BTC, ETH, SOL - filter in case sheet is missing some
-  var cols = [2, 3, 4].filter(function(c) { return c <= sheet.getLastColumn(); });
-  var offsets = [1, 2, 6, 12]; // 2h, 4h, 12h, 24h
+  // Detect coin columns after Timestamp
+  var coinHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var coins = [];
+  for (var i = 1; i < coinHeaders.length; i++) {
+    coins.push({ name: coinHeaders[i], col: i + 1 });
+  }
+
+  var offsets = [1, 2, 6, 12];
+  var suffixes = ['Δ2h', 'Δ4h', 'Δ12h', 'Δ24h'];
+
+  // Build headers for summary columns
+  var summaryHeaders = [];
+  coins.forEach(function(c) {
+    suffixes.forEach(function(suf) {
+      summaryHeaders.push(c.name + ' ' + suf);
+    });
+  });
+
+  var startCol = sheet.getLastColumn() + 1;
+  sheet.insertColumnsAfter(sheet.getLastColumn(), summaryHeaders.length);
+  sheet.getRange(1, startCol, 1, summaryHeaders.length).setValues([summaryHeaders]);
+
+  // Clear any existing data in summary columns except the last row
+  if (lastRow > 1) {
+    sheet.getRange(2, startCol, lastRow - 1, summaryHeaders.length).clearContent();
+  }
+
+  // Calculate change values for the last row
   var out = [];
-
-  for (var c = 0; c < cols.length; c++) {
-    var curr = sheet.getRange(dataRow, cols[c]).getValue();
-    for (var i = 0; i < offsets.length; i++) {
-      var prevRow = dataRow - offsets[i];
+  coins.forEach(function(c) {
+    var current = sheet.getRange(lastRow, c.col).getValue();
+    offsets.forEach(function(off) {
+      var prevRow = lastRow - off;
       if (prevRow >= 2) {
-        var prev = sheet.getRange(prevRow, cols[c]).getValue();
-        out.push(formatChange(curr, prev));
+        var prev = sheet.getRange(prevRow, c.col).getValue();
+        out.push(formatChange(current, prev));
       } else {
         out.push('');
       }
-    }
-  }
+    });
+  });
 
-  var summaryRow = dataRow + 1;
-  if (lastLabel !== 'Summary') {
-    sheet.insertRowsAfter(dataRow, 1);
-  }
-  sheet.getRange(summaryRow, 1, 1, required).clearContent();
-  sheet.getRange(summaryRow, 1).setValue('Summary');
-  sheet.getRange(summaryRow, startCol, 1, CHANGE_HEADERS.length).setValues([out]);
-}
-function updateChangeColumns() {
-  var sheet = getSheet();
-  var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return; // nothing to do
-
-  var offsets = [1, 2, 6, 12]; // number of rows back for 2h,4h,12h,24h
-  var suffixes = ['_Δ2h', '_Δ4h', '_Δ12h', '_Δ24h'];
-
-  var col = 2; // first coin column after Timestamp
-  while (col <= sheet.getLastColumn()) {
-    var header = String(sheet.getRange(1, col).getValue());
-    if (!header || header.indexOf('Δ') >= 0) {
-      col++;
-      continue;
-    }
-    // ensure four delta columns exist after the coin column
-    for (var i = 0; i < suffixes.length; i++) {
-      var expectCol = col + i + 1;
-      if (expectCol > sheet.getLastColumn()) {
-        sheet.insertColumnAfter(sheet.getLastColumn());
-      }
-      var h = sheet.getRange(1, expectCol).getValue();
-      if (h !== header + suffixes[i]) {
-        sheet.insertColumnAfter(expectCol - 1);
-        sheet.getRange(1, expectCol).setValue(header + suffixes[i]);
-      }
-    }
-    // recalc after possible insertions
-    var last = sheet.getRange(lastRow, col).getValue();
-    for (var i = 0; i < offsets.length; i++) {
-      var targetCol = col + i + 1;
-      sheet.getRange(2, targetCol, lastRow - 1).clearContent();
-      var prevRow = lastRow - offsets[i];
-      var val = '';
-      if (prevRow >= 2) {
-        var prev = sheet.getRange(prevRow, col).getValue();
-        val = formatChange(last, prev);
-      }
-      if (val) {
-        sheet.getRange(lastRow, targetCol).setValue(val);
-      }
-    }
-    col += suffixes.length + 1; // move past coin and its delta cols
-  }
+  sheet.getRange(lastRow, startCol, 1, summaryHeaders.length).setValues([out]);
 }
