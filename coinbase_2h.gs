@@ -274,28 +274,30 @@ function rolloverDailySheet() {
 function updateLatestChanges() {
   var sheet = getSheet();
   var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return;
+  if (lastRow <= 1) return; // nothing to summarise
 
-  // if a previous summary row exists, ignore it when reading data
   var lastLabel = sheet.getRange(lastRow, 1).getValue();
   var dataRow = lastLabel === 'Summary' ? lastRow - 1 : lastRow;
 
+  // ensure summary headers exist and there are enough columns
   var startCol = HEADERS.length + 1;
-  var need = startCol + CHANGE_HEADERS.length - 1;
-  if (sheet.getLastColumn() < need) {
-    sheet.insertColumnsAfter(sheet.getLastColumn(), need - sheet.getLastColumn());
+  var required = startCol + CHANGE_HEADERS.length - 1;
+  if (sheet.getLastColumn() < required) {
+    sheet.insertColumnsAfter(sheet.getLastColumn(), required - sheet.getLastColumn());
   }
   sheet.getRange(1, startCol, 1, CHANGE_HEADERS.length).setValues([CHANGE_HEADERS]);
 
-  var offsets = [1, 2, 6, 12];
-  var cols = [2, 3, 4]; // BTC, ETH, SOL columns
+  // columns holding BTC, ETH, SOL - filter in case sheet is missing some
+  var cols = [2, 3, 4].filter(function(c) { return c <= sheet.getLastColumn(); });
+  var offsets = [1, 2, 6, 12]; // 2h, 4h, 12h, 24h
   var out = [];
-  for (var a = 0; a < cols.length; a++) {
-    var curr = sheet.getRange(dataRow, cols[a]).getValue();
-    for (var o = 0; o < offsets.length; o++) {
-      var prevRow = dataRow - offsets[o];
+
+  for (var c = 0; c < cols.length; c++) {
+    var curr = sheet.getRange(dataRow, cols[c]).getValue();
+    for (var i = 0; i < offsets.length; i++) {
+      var prevRow = dataRow - offsets[i];
       if (prevRow >= 2) {
-        var prev = sheet.getRange(prevRow, cols[a]).getValue();
+        var prev = sheet.getRange(prevRow, cols[c]).getValue();
         out.push(formatChange(curr, prev));
       } else {
         out.push('');
@@ -304,11 +306,10 @@ function updateLatestChanges() {
   }
 
   var summaryRow = dataRow + 1;
-  if (lastLabel !== 'Summary' && lastRow >= summaryRow) {
-    // insert summary row if it doesn't exist
+  if (lastLabel !== 'Summary') {
     sheet.insertRowsAfter(dataRow, 1);
   }
-  sheet.getRange(summaryRow, 1, 1, need).clearContent();
+  sheet.getRange(summaryRow, 1, 1, required).clearContent();
   sheet.getRange(summaryRow, 1).setValue('Summary');
-  sheet.getRange(summaryRow, startCol, 1, out.length).setValues([out]);
+  sheet.getRange(summaryRow, startCol, 1, CHANGE_HEADERS.length).setValues([out]);
 }
