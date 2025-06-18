@@ -78,6 +78,11 @@ function onEdit(e) {
 
     var ledger = ensureLedgerSheet();
     ledger.appendRow(values.concat([new Date()]));
+    try {
+      recomputeLedger();
+    } catch (e) {
+      Logger.log(e);
+    }
   } catch (err) {
     Logger.log(err);
   }
