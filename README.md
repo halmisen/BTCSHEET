@@ -2,13 +2,15 @@
 
 This repository contains sample Google Apps Script code to fetch cryptocurrency prices from Coinbase every 2 hours.
 
-The `coinbase_2h.gs` script exposes several utilities:
+The `trade_manager.gs` script exposes several utilities:
 
 - `update2hPrices()` rebuilds the `Data` sheet with the latest **13** two hour candles for BTC-USD, ETH-USD and SOL-USD and automatically refreshes the change summary table beneath the data.
 - `fetchLatest2hCandles(product, limit)` builds recent 2h candles from 1h data.
 - `rolloverDailySheet()` copies the current `Data` sheet to a new sheet named by date and then refreshes `Data` for the new day.
 - `backfillHistory(start, end)` downloads historical two hour candles between two dates and stores them in a sheet named `History_<start>_to_<end>`.
 - `refreshLatestChanges()` rebuilds the summary table below the main data showing price differences for the last row compared to the previous 2h, 4h, 12h and 24h rows.
+- `initLedger()` creates the `Ledger` sheet and validation rules.
+- `recomputeLedger()` calculates running positions and floating P&L for all trades.
 
 The data is retrieved using the public Coinbase API endpoint:
 
