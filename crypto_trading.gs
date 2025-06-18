@@ -2,6 +2,7 @@
 // This script manages price data, trade entry and a running ledger.
 // It automatically creates required sheets and keeps the Ledger in sync with
 // the Data sheet. Designed for easy extension when adding new tokens/fields.
+// This script only alters rows at or below TRADE_HEADER_ROW so the price data region is preserved.
 
 // --- Configuration ----------------------------------------------------------
 const DATA_SHEET_NAME   = 'Data';
