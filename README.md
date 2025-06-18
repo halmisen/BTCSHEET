@@ -32,6 +32,8 @@ Use the Triggers panel to add two timed triggers:
 - `update2hPrices` — every **2 h**
 - `rolloverDailySheet` — daily at **DAILY_RESET_HOUR:00**
 
+**表头必须 9 列，脚本自动补空列；若想手动添加公式请从 E2 开始向右写 Δ2h ~ Δ24h。**
+
 Example formulas for the five Δ columns (row 2):
 
 ```text
