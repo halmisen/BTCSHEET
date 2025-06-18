@@ -8,6 +8,7 @@ The `coinbase_2h.gs` script exposes several utilities:
 - `fetchLatest2hCandles(product, limit)` builds recent 2h candles from 1h data.
 - `rolloverDailySheet()` copies the current `Data` sheet to a new sheet named by date and then refreshes `Data` for the new day.
 - `backfillHistory(start, end)` downloads historical two hour candles between two dates and stores them in a sheet named `History_<start>_to_<end>`.
+- `updateLatestChanges()` calculates the price changes of the newest row against the previous 2h, 4h, 12h and 24h rows and stores the result to the right of the table.
 
 The data is retrieved using the public Coinbase API endpoint:
 
@@ -46,3 +47,7 @@ I2: =IFERROR((B2-B14)/B14, "")
 ```
 
 **表头必须 9 列，脚本自动补空列；若想手动添加公式请从 E2 开始向右写 Δ2h ~ Δ24h。**
+The `updateLatestChanges()` function appends its results on the last row
+starting from **column J**. The twelve columns hold BTC, ETH and SOL changes
+against the previous 2h, 4h, 12h and 24h rows in the format
+`delta (percent)`.

@@ -4,10 +4,23 @@ const GRANULARITY_SECONDS = 3600;   // 1h candle
 const TWO_HOUR_CANDLES   = 13;      // Data table keeps 13 two hour candles
 const DAILY_RESET_HOUR   = 8;       // daily sheet rollover time
 const HEADERS = ['Timestamp', 'BTC', 'ETH', 'SOL', 'Δ2h', 'Δ4h', 'Δ8h', 'Δ12h', 'Δ24h'];
+// Additional columns for latest change summary
+const CHANGE_HEADERS = [
+  'BTC Δ2h', 'BTC Δ4h', 'BTC Δ12h', 'BTC Δ24h',
+  'ETH Δ2h', 'ETH Δ4h', 'ETH Δ12h', 'ETH Δ24h',
+  'SOL Δ2h', 'SOL Δ4h', 'SOL Δ12h', 'SOL Δ24h'
+];
 
 function formatTs(ts) {
   return Utilities.formatDate(new Date(ts * 1000), Session.getScriptTimeZone(),
     'yyyy-MM-dd HH:mm');
+}
+
+function formatChange(curr, prev) {
+  if (curr == null || curr === '' || prev == null || prev === '') return '';
+  var diff = curr - prev;
+  var pct = prev ? (diff / prev) * 100 : 0;
+  return diff.toFixed(1) + ' (' + pct.toFixed(2) + '%)';
 }
 
 function getSheet() {
@@ -254,4 +267,34 @@ function rolloverDailySheet() {
 
   // 立即填充 13 行
   update2hPrices();
+}
+
+function updateLatestChanges() {
+  var sheet = getSheet();
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+
+  var startCol = HEADERS.length + 1;
+  var need = startCol + CHANGE_HEADERS.length - 1;
+  if (sheet.getLastColumn() < need) {
+    sheet.insertColumnsAfter(sheet.getLastColumn(), need - sheet.getLastColumn());
+  }
+  sheet.getRange(1, startCol, 1, CHANGE_HEADERS.length).setValues([CHANGE_HEADERS]);
+
+  var offsets = [1, 2, 6, 12];
+  var cols = [2, 3, 4]; // BTC, ETH, SOL columns
+  var out = [];
+  for (var a = 0; a < cols.length; a++) {
+    var curr = sheet.getRange(lastRow, cols[a]).getValue();
+    for (var o = 0; o < offsets.length; o++) {
+      var prevRow = lastRow - offsets[o];
+      if (prevRow >= 2) {
+        var prev = sheet.getRange(prevRow, cols[a]).getValue();
+        out.push(formatChange(curr, prev));
+      } else {
+        out.push('');
+      }
+    }
+  }
+  sheet.getRange(lastRow, startCol, 1, out.length).setValues([out]);
 }
