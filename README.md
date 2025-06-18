@@ -4,11 +4,11 @@ This repository contains sample Google Apps Script code to fetch cryptocurrency 
 
 The `coinbase_2h.gs` script exposes several utilities:
 
-- `update2hPrices()` rebuilds the `Data` sheet with the latest **13** two hour candles for BTC-USD, ETH-USD and SOL-USD and automatically refreshes the change summary columns.
+- `update2hPrices()` rebuilds the `Data` sheet with the latest **13** two hour candles for BTC-USD, ETH-USD and SOL-USD and automatically refreshes the change summary table beneath the data.
 - `fetchLatest2hCandles(product, limit)` builds recent 2h candles from 1h data.
 - `rolloverDailySheet()` copies the current `Data` sheet to a new sheet named by date and then refreshes `Data` for the new day.
 - `backfillHistory(start, end)` downloads historical two hour candles between two dates and stores them in a sheet named `History_<start>_to_<end>`.
-- `refreshLatestChanges()` rebuilds the change summary columns at the end of the table showing price differences for the last row compared to the previous 2h, 4h, 12h and 24h rows.
+- `refreshLatestChanges()` rebuilds the summary table below the main data showing price differences for the last row compared to the previous 2h, 4h, 12h and 24h rows.
 
 The data is retrieved using the public Coinbase API endpoint:
 
@@ -34,7 +34,7 @@ Use the Triggers panel to add two timed triggers:
 - `update2hPrices` — every **2 h**
 - `rolloverDailySheet` — daily at **DAILY_RESET_HOUR:00**
 
-**表头只需 4 列（Timestamp 及各币种价格），脚本会在右侧自动创建 Δ2h ~ Δ24h 汇总列。**
+**表头只需 4 列（Timestamp 及各币种价格），脚本会在表格下方自动创建 Δ2h ~ Δ24h 汇总表。**
 
-The `refreshLatestChanges()` function rebuilds these summary columns and fills
-only the last row with values such as `+97.2 (0.09%)`.
+The `refreshLatestChanges()` function rebuilds this summary table and fills the
+cells with values such as `+97.2 (0.09%)`.
