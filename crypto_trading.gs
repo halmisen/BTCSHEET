@@ -10,6 +10,9 @@ const LEDGER_SHEET_NAME = 'Ledger';
 const TRADE_HEADER_ROW  = 20;            // trade table header row (1-indexed)
 const TEMPLATE_ROWS     = 5;             // empty rows for manual entry
 
+const PRICE_HEADERS   = ['Symbol','Price','Δ2h %','Δ4h %','Δ12h %','Δ24h %'];
+const PRODUCTS        = ['BTC-USD','ETH-USD','SOL-USD'];
+
 const TRADE_HEADERS  = ['Symbol','Side','Quantity','Price','Trade Time','Note'];
 const LEDGER_HEADERS = [
   'Trade ID','Trade Time','Symbol','Side','Price','Quantity',
@@ -76,16 +79,71 @@ function ensureLedgerHeaders(sheet) {
 
 // --- Helper ----------------------------------------------------------------
 
+/** Ensure the price summary table headers exist */
+function ensurePriceTable(sheet) {
+  if (!sheet) return;
+  const rng = sheet.getRange(1, 1, 1, PRICE_HEADERS.length);
+  const cur = rng.getValues()[0];
+  let mismatch = false;
+  for (let i = 0; i < PRICE_HEADERS.length; i++) {
+    if (cur[i] !== PRICE_HEADERS[i]) { mismatch = true; break; }
+  }
+  if (mismatch) rng.setValues([PRICE_HEADERS]);
+}
+
+/** Fetch the latest `count` hourly candles for a product */
+function fetchHourlyCandles(product, count) {
+  const url = `https://api.exchange.coinbase.com/products/${product}/candles?granularity=3600&limit=${count}`;
+  const res = UrlFetchApp.fetch(url, {headers: {Accept: 'application/json'}});
+  const data = JSON.parse(res.getContentText());
+  data.sort((a, b) => a[0] - b[0]);
+  return data;
+}
+
+/** Build a price row for the summary table */
+function calcPriceRow(product) {
+  const candles = fetchHourlyCandles(product, 25); // 24h of data
+  const last = candles[candles.length - 1][4];
+  function pct(h) {
+    const i = candles.length - 1 - h;
+    if (i < 0) return '';
+    const p = candles[i][4];
+    return (last - p) / p;
+  }
+  return [product.split('-')[0], last, pct(2), pct(4), pct(12), pct(24)];
+}
+
+/** Refresh the price summary table */
+function refreshPriceSummary() {
+  const {data} = ensureSheets();
+  ensurePriceTable(data);
+  const rows = PRODUCTS.map(p => calcPriceRow(p));
+  data.getRange(2, 1, rows.length, PRICE_HEADERS.length).setValues(rows);
+  const extra = data.getLastRow() - (rows.length + 1);
+  if (extra > 0) {
+    data.getRange(rows.length + 2, 1, extra, PRICE_HEADERS.length).clearContent();
+  }
+}
+
+/** Ensure a 2h trigger exists for refreshing prices */
+function ensurePriceTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  const exists = triggers.some(t => t.getHandlerFunction() === 'refreshPriceSummary');
+  if (!exists) {
+    ScriptApp.newTrigger('refreshPriceSummary').timeBased().everyHours(2).create();
+  }
+}
+
 /** Read the latest price for each token column in the Data sheet */
 function getLatestPrices(sheet) {
-  const lastRow = sheet.getLastRow();
-  const headers = sheet.getRange(1, 2, 1, sheet.getLastColumn() - 1).getValues()[0];
+  const last = sheet.getLastRow();
+  const range = last > 1 ? sheet.getRange(2, 1, last - 1, 2).getValues() : [];
   const prices = {};
-  if (lastRow > 1) {
-    headers.forEach((h, i) => {
-      if (h) prices[h] = sheet.getRange(lastRow, i + 2).getValue();
-    });
-  }
+  range.forEach(row => {
+    const sym = row[0];
+    const price = parseFloat(row[1]);
+    if (sym && !isNaN(price)) prices[sym] = price;
+  });
   return prices;
 }
 
@@ -93,6 +151,7 @@ function getLatestPrices(sheet) {
 function syncLedgerWithData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const {data, ledger} = ensureSheets();
+  ensurePriceTable(data);
   ensureTradeArea(data);
   ensureLedgerHeaders(ledger);
 
@@ -175,8 +234,11 @@ function onChange(e) {
 /** Initialisation when the spreadsheet is opened */
 function onOpen() {
   const {data, ledger} = ensureSheets();
+  ensurePriceTable(data);
   ensureTradeArea(data);
   ensureLedgerHeaders(ledger);
+  refreshPriceSummary();
+  ensurePriceTrigger();
   syncLedgerWithData();
 }
 
