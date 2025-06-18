@@ -330,20 +330,17 @@ function appendLatestPrices() {
     return;
   }
 
-  const btc = fetchSpotPrice('BTC');
-  const eth = fetchSpotPrice('ETH');
-  const sol = fetchSpotPrice('SOL');
-
+  const prices = fetchLatestSpotPrices();
   const timestamp = Utilities.formatDate(
     new Date(),
     Session.getScriptTimeZone(),
     'yyyy-MM-dd HH:mm:ss'
   );
 
-  sheet.appendRow([
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, 4).setValues([[
     timestamp,
-    btc !== null ? btc : 'ERROR',
-    eth !== null ? eth : 'ERROR',
-    sol !== null ? sol : 'ERROR'
-  ]);
+    prices.BTC !== null ? prices.BTC : 'ERROR',
+    prices.ETH !== null ? prices.ETH : 'ERROR',
+    prices.SOL !== null ? prices.SOL : 'ERROR'
+  ]]);
 }
