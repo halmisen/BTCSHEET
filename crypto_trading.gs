@@ -313,3 +313,37 @@ function onOpen() {
 
 /** Manual trigger to rebuild the ledger */
 function rebuildLedger() { syncLedgerWithData(); }
+
+/**
+ * Append the latest BTC, ETH and SOL spot prices to the "Data" sheet.
+ * Fetches prices from Coinbase and writes them with the current timestamp
+ * in yyyy-MM-dd HH:mm:ss format. Errors are written as "ERROR".
+ */
+function appendLatestPrices() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(DATA_SHEET_NAME);
+  if (!sheet) {
+    const msg = 'Sheet "' + DATA_SHEET_NAME + '" not found.' +
+                ' Please create a sheet named "' + DATA_SHEET_NAME + '".';
+    SpreadsheetApp.getUi().alert(msg);
+    Logger.log(msg);
+    return;
+  }
+
+  const btc = fetchSpotPrice('BTC');
+  const eth = fetchSpotPrice('ETH');
+  const sol = fetchSpotPrice('SOL');
+
+  const timestamp = Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    'yyyy-MM-dd HH:mm:ss'
+  );
+
+  sheet.appendRow([
+    timestamp,
+    btc !== null ? btc : 'ERROR',
+    eth !== null ? eth : 'ERROR',
+    sol !== null ? sol : 'ERROR'
+  ]);
+}

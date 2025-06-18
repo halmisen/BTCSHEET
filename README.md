@@ -40,3 +40,15 @@ Use the Triggers panel to add two timed triggers:
 
 The `refreshLatestChanges()` function rebuilds this summary table and fills the
 cells with values such as `+97.2 (0.09%)`.
+
+## Simple spot price logger
+
+If you only need to append the latest spot prices to the `Data` sheet you can
+call the `appendLatestPrices()` function. It fetches the current BTC, ETH and
+SOL prices from Coinbase and writes them with a timestamp to the next empty row.
+If the `Data` sheet is missing the script displays an alert explaining that the
+sheet must exist.
+
+To run it automatically open **Extensions → Apps Script → Triggers** and create
+a time‑driven trigger that runs `appendLatestPrices` at your desired interval
+(for example every 5 minutes).
