@@ -51,20 +51,29 @@ function fetchLatestCandle(product) {
   }
 }
 
-function fetchLatest2hCandles(product, limit) {
-  var now  = Math.floor(Date.now() / 1000);
-  var url  = 'https://api.exchange.coinbase.com/products/' +
-    product + '/candles?granularity=7200&limit=' + limit + '&end=' + now;
-  var resp = UrlFetchApp.fetch(url, {headers: {Accept: 'application/json'}});
-  if (resp.getResponseCode() !== 200) throw resp.getContentText();
-  var arr  = JSON.parse(resp.getContentText());
-  arr.sort(function(a, b) { return a[0] - b[0]; });
-  return arr.slice(-limit);
+function fetchLatest2hCandles(product, limit){
+  const url = `https://api.exchange.coinbase.com/products/${product}/candles`+
+              `?granularity=3600&limit=${limit*2}`;
+  const res = UrlFetchApp.fetch(url,{headers:{Accept:'application/json'}});
+  if(res.getResponseCode()!=200) throw res.getContentText();
+  const arr = JSON.parse(res).sort((a,b)=>b[0]-a[0]); // 最新在前
+  const out = [];
+  for(let i=0;i+1< arr.length && out.length<limit;i+=2){
+     const c1 = arr[i], c2 = arr[i+1];
+     out.push([             // [ts, low, high, open, close]
+       c2[0],               // 取较早蜡烛的时间戳
+       Math.min(c1[1],c2[1]),
+       Math.max(c1[2],c2[2]),
+       c2[3],
+       c1[4]
+     ]);
+  }
+  return out.reverse();     // 升序写表
 }
 
 function fetchHistorical2hCandles(product, startIso, endIso) {
   var url = 'https://api.exchange.coinbase.com/products/' + product +
-    '/candles?granularity=7200&start=' + startIso + '&end=' + endIso;
+    '/candles?granularity=3600&start=' + startIso + '&end=' + endIso;
   var options = {headers: {Accept: 'application/json'}};
   try {
     var response = UrlFetchApp.fetch(url, options);
@@ -72,10 +81,21 @@ function fetchHistorical2hCandles(product, startIso, endIso) {
       Logger.log('HTTP ' + response.getResponseCode() + ' for history ' + product);
       return [];
     }
-    var data = JSON.parse(response.getContentText());
-    if (!data) return [];
-    data.sort(function(a, b) { return a[0] - b[0]; });
-    return data;
+    var arr = JSON.parse(response.getContentText());
+    if (!arr) return [];
+    arr.sort(function(a, b) { return a[0] - b[0]; });
+    var out = [];
+    for (var i = 0; i + 1 < arr.length; i += 2) {
+      var c1 = arr[i], c2 = arr[i + 1];
+      out.push([
+        c1[0],
+        Math.min(c1[1], c2[1]),
+        Math.max(c1[2], c2[2]),
+        c1[3],
+        c2[4]
+      ]);
+    }
+    return out;
   } catch (e) {
     Logger.log('Error fetching history for ' + product + ': ' + e);
     return [];
@@ -157,7 +177,7 @@ function backfillHistory(startDate, endDate) {
   var end = new Date(endDate + 'T00:00:00Z');
   end.setDate(end.getDate() + 1);
 
-  var batchSeconds = 7200 * 350;
+  var batchSeconds = 3600 * 700; // fetch 350 two-hour periods as 700 one-hour candles
   var data = {};
   for (var i = 0; i < products.length; i++) {
     data[products[i]] = [];

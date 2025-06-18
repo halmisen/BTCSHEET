@@ -5,14 +5,14 @@ This repository contains sample Google Apps Script code to fetch cryptocurrency 
 The `coinbase_2h.gs` script exposes several utilities:
 
 - `update2hPrices()` rebuilds the `Data` sheet with the latest **13** two hour candles for BTC-USD, ETH-USD and SOL-USD.
-- `fetchLatest2hCandles(product, limit)` fetches recent 2h candles using the `end` parameter to avoid stale data.
+- `fetchLatest2hCandles(product, limit)` builds recent 2h candles from 1h data.
 - `rolloverDailySheet()` copies the current `Data` sheet to a new sheet named by date and then refreshes `Data` for the new day.
 - `backfillHistory(start, end)` downloads historical two hour candles between two dates and stores them in a sheet named `History_<start>_to_<end>`.
 
 The data is retrieved using the public Coinbase API endpoint:
 
 ```
-https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=7200&limit=1
+https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600&limit=2
 ```
 
 See the official documentation for details: <https://docs.cloud.coinbase.com/exchange/reference/exchangerestapi_getproductcandles>.
