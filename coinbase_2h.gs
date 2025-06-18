@@ -313,3 +313,48 @@ function updateLatestChanges() {
   sheet.getRange(summaryRow, 1).setValue('Summary');
   sheet.getRange(summaryRow, startCol, 1, CHANGE_HEADERS.length).setValues([out]);
 }
+function updateChangeColumns() {
+  var sheet = getSheet();
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return; // nothing to do
+
+  var offsets = [1, 2, 6, 12]; // number of rows back for 2h,4h,12h,24h
+  var suffixes = ['_Δ2h', '_Δ4h', '_Δ12h', '_Δ24h'];
+
+  var col = 2; // first coin column after Timestamp
+  while (col <= sheet.getLastColumn()) {
+    var header = String(sheet.getRange(1, col).getValue());
+    if (!header || header.indexOf('Δ') >= 0) {
+      col++;
+      continue;
+    }
+    // ensure four delta columns exist after the coin column
+    for (var i = 0; i < suffixes.length; i++) {
+      var expectCol = col + i + 1;
+      if (expectCol > sheet.getLastColumn()) {
+        sheet.insertColumnAfter(sheet.getLastColumn());
+      }
+      var h = sheet.getRange(1, expectCol).getValue();
+      if (h !== header + suffixes[i]) {
+        sheet.insertColumnAfter(expectCol - 1);
+        sheet.getRange(1, expectCol).setValue(header + suffixes[i]);
+      }
+    }
+    // recalc after possible insertions
+    var last = sheet.getRange(lastRow, col).getValue();
+    for (var i = 0; i < offsets.length; i++) {
+      var targetCol = col + i + 1;
+      sheet.getRange(2, targetCol, lastRow - 1).clearContent();
+      var prevRow = lastRow - offsets[i];
+      var val = '';
+      if (prevRow >= 2) {
+        var prev = sheet.getRange(prevRow, col).getValue();
+        val = formatChange(last, prev);
+      }
+      if (val) {
+        sheet.getRange(lastRow, targetCol).setValue(val);
+      }
+    }
+    col += suffixes.length + 1; // move past coin and its delta cols
+  }
+}
