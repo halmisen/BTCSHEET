@@ -51,36 +51,15 @@ function fetchLatestCandle(product) {
   }
 }
 
-function fetchRecent2hCandles(product, limit) {
-  var url = 'https://api.exchange.coinbase.com/products/' + product + '/candles?granularity=' + GRANULARITY_SECONDS + '&limit=' + (limit * 2);
-  var options = {headers: {Accept: 'application/json'}};
-  try {
-    var response = UrlFetchApp.fetch(url, options);
-    if (response.getResponseCode() !== 200) {
-      Logger.log('HTTP ' + response.getResponseCode() + ' for history ' + product);
-      return [];
-    }
-    var data = JSON.parse(response.getContentText());
-    if (!data) return [];
-    data.sort(function(a, b) { return a[0] - b[0]; });
-    var result = [];
-    for (var i = 0; i + 1 < data.length && result.length < limit; i += 2) {
-      var c1 = data[i];
-      var c2 = data[i + 1];
-      result.push([
-        c1[0],
-        Math.min(c1[1], c2[1]),
-        Math.max(c1[2], c2[2]),
-        c1[3],
-        c2[4],
-        (c1[5] || 0) + (c2[5] || 0)
-      ]);
-    }
-    return result;
-  } catch (e) {
-    Logger.log('Error fetching history for ' + product + ': ' + e);
-    return [];
-  }
+function fetchLatest2hCandles(product, limit) {
+  var now  = Math.floor(Date.now() / 1000);
+  var url  = 'https://api.exchange.coinbase.com/products/' +
+    product + '/candles?granularity=7200&limit=' + limit + '&end=' + now;
+  var resp = UrlFetchApp.fetch(url, {headers: {Accept: 'application/json'}});
+  if (resp.getResponseCode() !== 200) throw resp.getContentText();
+  var arr  = JSON.parse(resp.getContentText());
+  arr.sort(function(a, b) { return a[0] - b[0]; });
+  return arr.slice(-limit);
 }
 
 function fetchHistorical2hCandles(product, startIso, endIso) {
@@ -109,7 +88,7 @@ function update2hPrices() {
   var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   var data = {};
   for (var i = 0; i < products.length; i++) {
-    data[products[i]] = fetchRecent2hCandles(products[i], TWO_HOUR_CANDLES);
+    data[products[i]] = fetchLatest2hCandles(products[i], TWO_HOUR_CANDLES);
   }
 
   var lastTs = '';
@@ -147,7 +126,7 @@ function initHistory() {
   var products = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
   var data = {};
   for (var i = 0; i < products.length; i++) {
-    data[products[i]] = fetchRecent2hCandles(products[i], TWO_HOUR_CANDLES);
+    data[products[i]] = fetchLatest2hCandles(products[i], TWO_HOUR_CANDLES);
   }
   for (var j = 0; j < TWO_HOUR_CANDLES; j++) {
     var ts = data['BTC-USD'][j] ? formatTs(data['BTC-USD'][j][0]) : '';
