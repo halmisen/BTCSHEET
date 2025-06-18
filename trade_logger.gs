@@ -60,25 +60,122 @@ function onOpen(e) {
   ensureLedgerSheet();
 }
 
-/** Monitor edits in the trade area and append to Ledger */
+/** Monitor edits and route to the appropriate handler */
 function onEdit(e) {
   try {
     if (!e) return;
-    var range = e.range;
-    var sheet = range.getSheet();
-    if (sheet.getName() !== DATA_SHEET_NAME) return;
+    var sheet = e.range.getSheet();
+    var name = sheet.getName();
 
-    var row = range.getRow();
-    if (row <= TRADE_START_ROW) return;
-
-    var values = sheet.getRange(row, 1, 1, TRADE_HEADERS.length).getValues()[0];
-    if (!values[0] || !values[1] || !values[2] || !values[3] || !values[4]) {
-      return; // require all mandatory fields
+    if (name === DATA_SHEET_NAME) {
+      handleDataEdit(e);
+    } else if (name === LEDGER_SHEET_NAME) {
+      ledgerOnEdit(e); // defined in ledger.gs
     }
-
-    var ledger = ensureLedgerSheet();
-    ledger.appendRow(values.concat([new Date()]));
   } catch (err) {
     Logger.log(err);
   }
+}
+
+/** Append completed trade rows from the Data sheet to the Ledger */
+function handleDataEdit(e) {
+  var range = e.range;
+  var row = range.getRow();
+  if (row <= TRADE_START_ROW) return;
+
+  var sheet = range.getSheet();
+  var values = sheet.getRange(row, 1, 1, TRADE_HEADERS.length).getValues()[0];
+  if (!values[0] || !values[1] || !values[2] || !values[3] || !values[4]) {
+    return; // require all mandatory fields
+  }
+
+  var ledger = ensureLedgerSheet();
+  ledger.appendRow(values.concat([new Date()]));
+}
+
+/** Find price for symbol at the given timestamp in Data sheet */
+function findPrice(symbol, timeStr) {
+  var sheet = getSheet(); // from coinbase_2h.gs
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return null;
+  var timeVals = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  var col = {BTC:2, ETH:3, SOL:4}[symbol];
+  if (!col) return null;
+  for (var i = 0; i < timeVals.length; i++) {
+    if (timeVals[i][0] == timeStr) {
+      return sheet.getRange(i + 2, col).getValue();
+    }
+  }
+  return null;
+}
+
+/** Return the latest price for each symbol from the Data sheet */
+function getLatestPrices() {
+  var sheet = getSheet();
+  var lastRow = sheet.getLastRow();
+  var prices = {BTC:0, ETH:0, SOL:0};
+  if (lastRow <= 1) return prices;
+  prices.BTC = sheet.getRange(lastRow, 2).getValue();
+  prices.ETH = sheet.getRange(lastRow, 3).getValue();
+  prices.SOL = sheet.getRange(lastRow, 4).getValue();
+  return prices;
+}
+
+/** Recalculate ledger formulas for all rows and update summary */
+function recomputeLedger() {
+  var sheet = getLedgerSheet();
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+
+  var col = {id:0, time:1, sym:2, side:3, price:4, qty:5,
+             amt:6, pos:7, avg:8, pnl:9};
+
+  var pos = {BTC:0, ETH:0, SOL:0};
+  var avg = {BTC:0, ETH:0, SOL:0};
+  var lastPrices = getLatestPrices();
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var sym = row[col.sym];
+    if (!sym) continue;
+    var price = parseFloat(row[col.price]);
+    var qty = parseFloat(row[col.qty]);
+    if (isNaN(price) || isNaN(qty)) continue;
+    var sign = row[col.side] == 'Buy' ? 1 : -1;
+
+    var prevPos = pos[sym];
+    var prevAvg = avg[sym];
+    var newPos = prevPos + qty * sign;
+    var newAvg = prevAvg;
+    if (sign > 0) {
+      newAvg = (prevAvg * Math.abs(prevPos) + price * qty) / Math.abs(newPos);
+    } else {
+      if (Math.sign(prevPos) == Math.sign(newPos) && prevPos != 0) {
+        newAvg = prevAvg;
+      } else if (newPos == 0) {
+        newAvg = 0;
+      } else {
+        newAvg = price;
+      }
+    }
+
+    pos[sym] = newPos;
+    avg[sym] = newAvg;
+
+    row[col.amt] = price * qty * sign;
+    row[col.pos] = newPos;
+    row[col.avg] = newAvg;
+    row[col.pnl] = (lastPrices[sym] - newAvg) * newPos;
+
+    sheet.getRange(i + 1, col.amt + 1, 1, 4)
+      .setValues([[row[col.amt], row[col.pos], row[col.avg], row[col.pnl]]]);
+  }
+
+  var start = sheet.getLastRow() + 2;
+  var out = [['Symbol','Position','Avg Cost','Floating P&L']];
+  ['BTC','ETH','SOL'].forEach(function(s) {
+    out.push([s, pos[s], avg[s], (lastPrices[s] - avg[s]) * pos[s]]);
+  });
+  sheet.getRange(start, 1, out.length, out[0].length).clearContent();
+  sheet.getRange(start, 1, out.length, out[0].length).setValues(out);
 }
