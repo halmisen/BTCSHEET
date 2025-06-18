@@ -5,6 +5,22 @@ const LEDGER_SHEET_NAME = 'Ledger';
 const TRADE_START_ROW = 20; // Row where trade headers begin
 const TRADE_HEADERS = ['Trade ID', 'Trade Time', 'Symbol', 'Side', 'Price', 'Quantity', 'Note'];
 
+// Ledger columns mirroring ledger.gs but with Note and Logged Timestamp fields
+const LEDGER_HEADERS = [
+  'Trade ID',
+  'Trade Time',
+  'Symbol',
+  'Side',
+  'Price',
+  'Quantity',
+  'Note',
+  'Trade Amount',
+  'Running Position',
+  'Average Cost',
+  'Floating P&L',
+  'Logged Timestamp'
+];
+
 /** Ensure trade area headers exist and add blank template rows */
 function ensureTradeArea() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -34,7 +50,7 @@ function ensureLedgerSheet() {
   if (!sheet) {
     sheet = ss.insertSheet(LEDGER_SHEET_NAME);
   }
-  var expected = TRADE_HEADERS.concat(['Logged Timestamp']);
+  var expected = LEDGER_HEADERS;
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(expected);
   } else {
@@ -107,8 +123,81 @@ function onEdit(e) {
     }
 
     var ledger = ensureLedgerSheet();
-    ledger.appendRow(values.concat([new Date()]));
+    var nextId = ledger.getRange(ledger.getLastRow(), 1).getValue();
+    nextId = nextId ? nextId + 1 : 1;
+    var rowData = [
+      nextId,            // Trade ID
+      values[4],         // Trade Time
+      values[0],         // Symbol
+      values[1],         // Side
+      values[3],         // Price
+      values[2],         // Quantity
+      values[5],         // Note
+      '', '', '', '',    // Calculated fields
+      new Date()         // Logged Timestamp
+    ];
+    ledger.appendRow(rowData);
+    recomputeLedger();
   } catch (err) {
     Logger.log(err);
   }
+}
+
+/** Recalculate ledger amounts and running stats for all rows */
+function recomputeLedger() {
+  var sheet = ensureLedgerSheet();
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return;
+
+  var col = {id:0, time:1, sym:2, side:3, price:4, qty:5,
+             note:6, amt:7, pos:8, avg:9, pnl:10};
+
+  var pos = {BTC:0, ETH:0, SOL:0};
+  var avg = {BTC:0, ETH:0, SOL:0};
+  var lastPrices = getLatestPrices();
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var sym = row[col.sym];
+    if (!sym) continue;
+    var price = parseFloat(row[col.price]);
+    var qty = parseFloat(row[col.qty]);
+    if (isNaN(price) || isNaN(qty)) continue;
+    var sign = row[col.side] == 'Buy' ? 1 : -1;
+
+    var prevPos = pos[sym];
+    var prevAvg = avg[sym];
+    var newPos = prevPos + qty * sign;
+    var newAvg = prevAvg;
+    if (sign > 0) {
+      newAvg = (prevAvg * Math.abs(prevPos) + price * qty) / Math.abs(newPos);
+    } else {
+      if (Math.sign(prevPos) == Math.sign(newPos) && prevPos != 0) {
+        newAvg = prevAvg;
+      } else if (newPos == 0) {
+        newAvg = 0;
+      } else {
+        newAvg = price;
+      }
+    }
+
+    pos[sym] = newPos;
+    avg[sym] = newAvg;
+
+    row[col.amt] = price * qty * sign;
+    row[col.pos] = newPos;
+    row[col.avg] = newAvg;
+    row[col.pnl] = (lastPrices[sym] - newAvg) * newPos;
+
+    sheet.getRange(i + 1, col.amt + 1, 1, 4)
+         .setValues([[row[col.amt], row[col.pos], row[col.avg], row[col.pnl]]]);
+  }
+
+  var start = sheet.getLastRow() + 2;
+  var out = [['Symbol','Position','Avg Cost','Floating P&L']];
+  ['BTC','ETH','SOL'].forEach(function(s) {
+    out.push([s, pos[s], avg[s], (lastPrices[s] - avg[s]) * pos[s]]);
+  });
+  sheet.getRange(start, 1, out.length, out[0].length).clearContent();
+  sheet.getRange(start, 1, out.length, out[0].length).setValues(out);
 }
