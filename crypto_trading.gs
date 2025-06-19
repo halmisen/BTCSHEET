@@ -1,352 +1,182 @@
 /**
- * Crypto Trading Sheet Manager
+ * Crypto Tools for Google Sheets
  *
- * Maintains a price log, manual trade log and an automated ledger
- * in a Google Spreadsheet.
- *
- * This script creates the required "Data" and "Ledger" sheets if they
- * do not exist and keeps the ledger in sync with manual trades.
+ * Creates a custom menu that allows fetching the latest BTC/ETH/SOL prices,
+ * manually logging trades and rebuilding the trade ledger.
+ * All sheets are created automatically if missing.
  */
 
 const DATA_SHEET_NAME = 'Data';
 const LEDGER_SHEET_NAME = 'Ledger';
 
-const PRICE_HEADERS  = ['Timestamp', 'BTC', 'ETH', 'SOL'];
-const TRADE_HEADERS  = ['Symbol', 'Side', 'Quantity', 'Price', 'Trade Time', 'Note'];
+const PRICE_HEADERS = ['Timestamp', 'BTC', 'ETH', 'SOL'];
 const LEDGER_HEADERS = [
   'Trade ID', 'Trade Time', 'Symbol', 'Side', 'Price', 'Quantity',
   'Trade Amount', 'Running Position', 'Average Cost', 'Floating P&L'
 ];
 
-// Initial row for the trade log header when creating the Data sheet
-const INITIAL_TRADE_HEADER_ROW = 50;
-
-// -----------------------------------------------------------------------------
-// Initialization and menu
-// -----------------------------------------------------------------------------
-
-/** Adds a custom menu and ensures sheets exist */
+/** Adds the custom menu when the spreadsheet is opened. */
 function onOpen() {
-  initialize();
-  SpreadsheetApp.getUi().createMenu('Crypto Tools')
-    .addItem('Fetch Latest Prices', 'menuFetchPrices')
-    .addItem('Add Manual Trade', 'menuAddTrade')
+  ensureSheets();
+  SpreadsheetApp.getUi()
+    .createMenu('Crypto Tools')
+    .addItem('Fetch Latest Prices', 'menuFetchLatestPrices')
+    .addItem('Add Manual Trade', 'menuAddManualTrade')
     .addItem('Rebuild Ledger', 'menuRebuildLedger')
     .addToUi();
 }
 
-/** Ensure Data and Ledger sheets exist and have valid headers */
-function initialize() {
+/** Ensures that Data and Ledger sheets exist with proper headers. */
+function ensureSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let data   = ss.getSheetByName(DATA_SHEET_NAME);
-  let ledger = ss.getSheetByName(LEDGER_SHEET_NAME);
 
+  let data = ss.getSheetByName(DATA_SHEET_NAME);
   if (!data) {
     data = ss.insertSheet(DATA_SHEET_NAME);
-    setupDataSheet(data);
-  } else if (!checkDataSheet(data)) {
-    SpreadsheetApp.getUi().alert('Data sheet structure invalid. Rebuilding.');
-    ss.deleteSheet(data);
-    data = ss.insertSheet(DATA_SHEET_NAME);
-    setupDataSheet(data);
+  }
+  const dataHdr = data.getRange(1, 1, 1, PRICE_HEADERS.length).getValues()[0];
+  if (dataHdr.join() !== PRICE_HEADERS.join()) {
+    data.clear();
+    data.getRange(1, 1, 1, PRICE_HEADERS.length)
+        .setValues([PRICE_HEADERS])
+        .setFontWeight('bold');
   }
 
+  let ledger = ss.getSheetByName(LEDGER_SHEET_NAME);
   if (!ledger) {
     ledger = ss.insertSheet(LEDGER_SHEET_NAME);
-    setupLedgerSheet(ledger);
-  } else if (!checkLedgerSheet(ledger)) {
-    SpreadsheetApp.getUi().alert('Ledger sheet structure invalid. Rebuilding.');
-    ss.deleteSheet(ledger);
-    ledger = ss.insertSheet(LEDGER_SHEET_NAME);
-    setupLedgerSheet(ledger);
+  }
+  const ledgerHdr = ledger.getRange(1, 1, 1, LEDGER_HEADERS.length).getValues()[0];
+  if (ledgerHdr.join() !== LEDGER_HEADERS.join()) {
+    ledger.clear();
+    ledger.getRange(1, 1, 1, LEDGER_HEADERS.length)
+          .setValues([LEDGER_HEADERS])
+          .setFontWeight('bold');
   }
 }
 
-/** Build the Data sheet headers and spacing */
-function setupDataSheet(sheet) {
-  sheet.clear();
-  sheet.getRange(1, 1, 1, PRICE_HEADERS.length)
-       .setValues([PRICE_HEADERS])
-       .setFontWeight('bold');
-  sheet.getRange(INITIAL_TRADE_HEADER_ROW, 1, 1, TRADE_HEADERS.length)
-       .setValues([TRADE_HEADERS])
-       .setFontWeight('bold');
-}
-
-/** Build the Ledger sheet headers */
-function setupLedgerSheet(sheet) {
-  sheet.clear();
-  sheet.getRange(1, 1, 1, LEDGER_HEADERS.length)
-       .setValues([LEDGER_HEADERS])
-       .setFontWeight('bold');
-}
-
-/** Validate Data sheet header rows */
-function checkDataSheet(sheet) {
-  if (!sheet) return false;
-  const hdr = sheet.getRange(1, 1, 1, PRICE_HEADERS.length).getValues()[0];
-  for (let i = 0; i < PRICE_HEADERS.length; i++) {
-    if (hdr[i] !== PRICE_HEADERS[i]) return false;
-  }
-  const thr = getTradeHeaderRow(sheet);
-  if (!thr) return false;
-  const tHdr = sheet.getRange(thr, 1, 1, TRADE_HEADERS.length).getValues()[0];
-  for (let i = 0; i < TRADE_HEADERS.length; i++) {
-    if (tHdr[i] !== TRADE_HEADERS[i]) return false;
-  }
-  return true;
-}
-
-/** Validate Ledger sheet header */
-function checkLedgerSheet(sheet) {
-  if (!sheet) return false;
-  const hdr = sheet.getRange(1, 1, 1, LEDGER_HEADERS.length).getValues()[0];
-  for (let i = 0; i < LEDGER_HEADERS.length; i++) {
-    if (hdr[i] !== LEDGER_HEADERS[i]) return false;
-  }
-  return true;
-}
-
-// -----------------------------------------------------------------------------
-// Menu actions
-// -----------------------------------------------------------------------------
-
-/** Menu: fetch latest prices and append to Data sheet */
-function menuFetchPrices() {
-  initialize();
+/** Menu handler: fetches prices and appends a new row to the Data sheet. */
+function menuFetchLatestPrices() {
+  ensureSheets();
   appendLatestPrices();
 }
 
-/** Menu: prompt user and append a trade */
-function menuAddTrade() {
-  initialize();
+/** Menu handler: prompts the user for trade details and saves the trade. */
+function menuAddManualTrade() {
+  ensureSheets();
   const ui = SpreadsheetApp.getUi();
 
-  const symResp = ui.prompt('Add Trade', 'Symbol (e.g. BTC)', ui.ButtonSet.OK_CANCEL);
-  if (symResp.getSelectedButton() !== ui.Button.OK) return;
-  const symbol = symResp.getResponseText().trim().toUpperCase();
+  const symRes = ui.prompt('Add Trade', 'Symbol (e.g. BTC)', ui.ButtonSet.OK_CANCEL);
+  if (symRes.getSelectedButton() !== ui.Button.OK) return;
+  const symbol = symRes.getResponseText().trim().toUpperCase();
   if (!symbol) return;
 
-  const sideResp = ui.prompt('Add Trade', 'Side (Buy or Sell)', ui.ButtonSet.OK_CANCEL);
-  if (sideResp.getSelectedButton() !== ui.Button.OK) return;
-  const side = sideResp.getResponseText().trim();
-  if (!/^buy$|^sell$/i.test(side)) { ui.alert('Side must be Buy or Sell.'); return; }
+  const sideRes = ui.prompt('Add Trade', 'Side (Buy or Sell)', ui.ButtonSet.OK_CANCEL);
+  if (sideRes.getSelectedButton() !== ui.Button.OK) return;
+  const side = sideRes.getResponseText().trim().toUpperCase();
+  if (side !== 'BUY' && side !== 'SELL') { ui.alert('Side must be Buy or Sell'); return; }
 
-  const qtyResp = ui.prompt('Add Trade', 'Quantity', ui.ButtonSet.OK_CANCEL);
-  if (qtyResp.getSelectedButton() !== ui.Button.OK) return;
-  const qty = parseFloat(qtyResp.getResponseText());
-  if (isNaN(qty)) { ui.alert('Invalid quantity.'); return; }
+  const priceRes = ui.prompt('Add Trade', 'Price', ui.ButtonSet.OK_CANCEL);
+  if (priceRes.getSelectedButton() !== ui.Button.OK) return;
+  const price = parseFloat(priceRes.getResponseText());
+  if (isNaN(price)) { ui.alert('Invalid price'); return; }
 
-  const priceResp = ui.prompt('Add Trade', 'Price', ui.ButtonSet.OK_CANCEL);
-  if (priceResp.getSelectedButton() !== ui.Button.OK) return;
-  const price = parseFloat(priceResp.getResponseText());
-  if (isNaN(price)) { ui.alert('Invalid price.'); return; }
+  const qtyRes = ui.prompt('Add Trade', 'Quantity', ui.ButtonSet.OK_CANCEL);
+  if (qtyRes.getSelectedButton() !== ui.Button.OK) return;
+  const qty = parseFloat(qtyRes.getResponseText());
+  if (isNaN(qty)) { ui.alert('Invalid quantity'); return; }
 
-  const noteResp = ui.prompt('Add Trade', 'Note (optional)', ui.ButtonSet.OK_CANCEL);
-  if (noteResp.getSelectedButton() !== ui.Button.OK) return;
-  const note = noteResp.getResponseText();
+  const ledger = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(LEDGER_SHEET_NAME);
+  const last = ledger.getLastRow();
+  const nextId = last >= 2 ? Number(ledger.getRange(last, 1).getValue()) + 1 : 1;
+  const time = Utilities.formatDate(new Date(), SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm:ss');
 
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DATA_SHEET_NAME);
-  appendTradeRow(sheet, [symbol, side, qty, price, new Date(), note]);
-  buildLedger();
+  ledger.appendRow([nextId, time, symbol, side, price, qty, '', '', '', '']);
+  menuRebuildLedger();
 }
 
-/** Menu: rebuild the ledger from trade log */
+/** Menu handler: recomputes all ledger statistics. */
 function menuRebuildLedger() {
-  initialize();
-  buildLedger();
+  ensureSheets();
+  rebuildLedger();
 }
 
-// -----------------------------------------------------------------------------
-// Price fetching and logging
-// -----------------------------------------------------------------------------
-
-/** Fetch spot price for a symbol using Coinbase API */
+/** Fetches the latest spot price for a single symbol. */
 function fetchPrice(symbol) {
   const url = 'https://api.coinbase.com/v2/prices/' + symbol + '-USD/spot';
   try {
-    const res = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
     if (res.getResponseCode() === 200) {
       const json = JSON.parse(res.getContentText());
       return parseFloat(json.data.amount);
     }
-  } catch (err) {}
-  return null;
+    Logger.log('Failed to fetch ' + symbol + ': HTTP ' + res.getResponseCode());
+  } catch (err) {
+    Logger.log('Error fetching ' + symbol + ': ' + err);
+  }
+  return 'ERROR';
 }
 
-/** Fetch the latest BTC, ETH and SOL prices */
-function fetchLatestPrices() {
-  return {
-    BTC: fetchPrice('BTC'),
-    ETH: fetchPrice('ETH'),
-    SOL: fetchPrice('SOL')
-  };
-}
-
-/** Append latest prices to the Data sheet */
+/** Fetches prices for BTC, ETH and SOL and appends them to the Data sheet. */
 function appendLatestPrices() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DATA_SHEET_NAME);
-  if (!checkDataSheet(sheet)) {
-    SpreadsheetApp.getUi().alert('Data sheet structure invalid.');
-    return;
-  }
-
-  let tradeHeaderRow = getTradeHeaderRow(sheet);
-  if (!tradeHeaderRow) tradeHeaderRow = createTradeHeader(sheet);
-
-  const prices = fetchLatestPrices();
-  const ts = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-
-  let nextRow = findNextPriceRow(sheet, tradeHeaderRow);
-  if (nextRow >= tradeHeaderRow) {
-    sheet.insertRowsBefore(tradeHeaderRow, 1);
-    tradeHeaderRow += 1;
-    nextRow = tradeHeaderRow - 1;
-  }
-
-  sheet.getRange(nextRow, 1, 1, PRICE_HEADERS.length)
-       .setValues([[ts, prices.BTC, prices.ETH, prices.SOL]]);
+  const ts = Utilities.formatDate(new Date(), SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  const prices = [fetchPrice('BTC'), fetchPrice('ETH'), fetchPrice('SOL')];
+  sheet.appendRow([ts].concat(prices));
 }
 
-// -----------------------------------------------------------------------------
-// Trade log helpers
-// -----------------------------------------------------------------------------
-
-/** Append a trade row to the manual trade log */
-function appendTradeRow(sheet, values) {
-  let thr = getTradeHeaderRow(sheet);
-  if (!thr) thr = createTradeHeader(sheet);
-  let row = thr + 1;
-  while (sheet.getRange(row, 1, 1, TRADE_HEADERS.length).getValues()[0].some(v => v !== '')) row++;
-  sheet.getRange(row, 1, 1, TRADE_HEADERS.length).setValues([values]);
-}
-
-/** Locate the trade log header row */
-function getTradeHeaderRow(sheet) {
-  const last = sheet.getLastRow();
-  for (let r = 1; r <= last; r++) {
-    const row = sheet.getRange(r, 1, 1, TRADE_HEADERS.length).getValues()[0];
-    let match = true;
-    for (let i = 0; i < TRADE_HEADERS.length; i++) {
-      if (row[i] !== TRADE_HEADERS[i]) { match = false; break; }
-    }
-    if (match) return r;
-  }
-  return null;
-}
-
-/** Create the trade log header below existing data */
-function createTradeHeader(sheet) {
-  const row = sheet.getLastRow() + 2;
-  sheet.getRange(row, 1, 1, TRADE_HEADERS.length)
-       .setValues([TRADE_HEADERS])
-       .setFontWeight('bold');
-  return row;
-}
-
-/** Find the next price row before the trade log */
-function findNextPriceRow(sheet, tradeHeaderRow) {
-  const rng = sheet.getRange(2, 1, tradeHeaderRow - 2, 1).getValues();
-  for (let i = rng.length - 1; i >= 0; i--) {
-    if (rng[i][0]) return i + 3;
-  }
-  return 2;
-}
-
-// -----------------------------------------------------------------------------
-// Ledger building
-// -----------------------------------------------------------------------------
-
-/** Recalculate the entire ledger based on the trade log */
-function buildLedger() {
+/** Rebuilds the ledger based on the raw trades in the Ledger sheet. */
+function rebuildLedger() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const data   = ss.getSheetByName(DATA_SHEET_NAME);
   const ledger = ss.getSheetByName(LEDGER_SHEET_NAME);
+  const data = ss.getSheetByName(DATA_SHEET_NAME);
 
-  if (!checkDataSheet(data) || !checkLedgerSheet(ledger)) {
-    SpreadsheetApp.getUi().alert('Sheet structure invalid. Cannot rebuild ledger.');
-    return;
-  }
+  const raw = ledger.getRange(2, 1, Math.max(ledger.getLastRow() - 1, 0), 6).getValues()
+                .filter(r => r[0]);
+  const results = [];
+  const pos = {};
+  const avg = {};
 
-  const thr = getTradeHeaderRow(data);
-  if (!thr) {
-    SpreadsheetApp.getUi().alert('Trade log header missing.');
-    return;
-  }
+  raw.forEach(r => {
+    const [id, time, sym, side, price, qty] = r;
+    const sign = side.toUpperCase() === 'BUY' ? 1 : -1;
+    if (pos[sym] === undefined) { pos[sym] = 0; avg[sym] = 0; }
 
-  const lastPriceRow = findNextPriceRow(data, thr) - 1;
-  const priceRow = data.getRange(lastPriceRow, 1, 1, PRICE_HEADERS.length).getValues()[0];
-  const currentPrices = {BTC: priceRow[1], ETH: priceRow[2], SOL: priceRow[3]};
-
-  let trades = [];
-  if (data.getLastRow() > thr) {
-    trades = data.getRange(thr + 1, 1, data.getLastRow() - thr, TRADE_HEADERS.length)
-                .getValues()
-                .filter(r => r.some(v => v !== ''));
-  }
-
-  const pos = {};    // running position per symbol
-  const avg = {};    // average cost per symbol
-  const rows = [];
-  let id = 1;
-
-  trades.forEach(t => {
-    const [symbol, side, qtyVal, priceVal, timeVal] = t;
-    const qty = parseFloat(qtyVal);
-    const price = parseFloat(priceVal);
-    if (!symbol || isNaN(qty) || isNaN(price) || !side) return;
-
-    const sign = /^buy$/i.test(side) ? 1 : -1;
-    if (pos[symbol] === undefined) { pos[symbol] = 0; avg[symbol] = 0; }
-
-    const prevPos = pos[symbol];
-    const prevAvg = avg[symbol];
+    const prevPos = pos[sym];
+    const prevAvg = avg[sym];
     const newPos = prevPos + qty * sign;
     let newAvg = prevAvg;
 
     if (sign > 0) {
-      newAvg = (prevAvg * Math.abs(prevPos) + price * qty) / Math.abs(newPos);
-    } else {
-      if (Math.sign(prevPos) === Math.sign(newPos) && prevPos !== 0) {
-        newAvg = prevAvg;
-      } else if (newPos === 0) {
-        newAvg = 0;
-      } else {
-        newAvg = price;
-      }
+      newAvg = (prevAvg * prevPos + price * qty) / newPos;
+    } else if (newPos === 0) {
+      newAvg = 0;
     }
 
-    pos[symbol] = newPos;
-    avg[symbol] = newAvg;
+    pos[sym] = newPos;
+    avg[sym] = newAvg;
 
     const tradeAmt = price * qty * sign;
-    const floatPnl = ((currentPrices[symbol] || 0) - newAvg) * newPos;
-
-    rows.push([id++, timeVal || new Date(), symbol, side, price, qty,
-               tradeAmt, newPos, newAvg, floatPnl]);
+    results.push([id, time, sym, side, price, qty, tradeAmt, newPos, newAvg, '']);
   });
 
-  ledger.clearContents();
-  ledger.getRange(1, 1, 1, LEDGER_HEADERS.length)
-        .setValues([LEDGER_HEADERS])
-        .setFontWeight('bold');
-  if (rows.length) {
-    ledger.getRange(2, 1, rows.length, LEDGER_HEADERS.length).setValues(rows);
-  }
-}
+  const priceRow = data.getRange(data.getLastRow(), 1, 1, PRICE_HEADERS.length).getValues()[0];
+  const currentPrices = { BTC: priceRow[1], ETH: priceRow[2], SOL: priceRow[3] };
 
-// -----------------------------------------------------------------------------
-// Triggered updates
-// -----------------------------------------------------------------------------
-
-/** When the Data sheet is edited, rebuild the ledger if trade log changed */
-function onEdit(e) {
-  if (!e) return;
-  const sheet = e.range.getSheet();
-  if (sheet.getName() === DATA_SHEET_NAME) {
-    const thr = getTradeHeaderRow(sheet);
-    if (thr && e.range.getRow() > thr) {
-      buildLedger();
+  results.forEach(row => {
+    const sym = row[2];
+    const cur = currentPrices[sym];
+    const posVal = row[7];
+    const avgVal = row[8];
+    if (typeof cur === 'number') {
+      row[9] = (cur - avgVal) * posVal;
+    } else {
+      row[9] = 'ERROR';
     }
+  });
+
+  ledger.getRange(2, 1, Math.max(ledger.getLastRow() - 1, 0), LEDGER_HEADERS.length).clearContent();
+  if (results.length) {
+    ledger.getRange(2, 1, results.length, LEDGER_HEADERS.length).setValues(results);
   }
 }
