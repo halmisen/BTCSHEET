@@ -1,9 +1,10 @@
 /**
  * Crypto Price Logger for Google Sheets
  *
- * Provides utilities to fetch BTC, ETH and SOL prices from CoinGecko
- * and log them in a sheet named "Data". Run installTriggers() once
- * to create a two-hourly trigger that records prices automatically.
+ * Provides utilities to fetch BTC, ETH and SOL spot prices from the
+ * Coinbase public API and log them in a sheet named "Data". Run
+ * installTriggers() once to create a two-hourly trigger that records
+ * prices automatically.
  */
 
 // -----------------------------------------------------------------------------
@@ -16,26 +17,47 @@ const DATA_SHEET_NAME = 'Data';
 /** Header row for the Data sheet */
 const DATA_HEADERS = ['Timestamp', 'BTC', 'ETH', 'SOL'];
 
+/** List of crypto symbols to retrieve from Coinbase */
+const CRYPTO_IDS = ['BTC', 'ETH', 'SOL'];
+
 // -----------------------------------------------------------------------------
 // Price fetching
 // -----------------------------------------------------------------------------
 
 /**
- * Fetch latest prices from CoinGecko.
+ * Fetch latest spot prices from Coinbase.
+ * Retries up to 3 times with exponential backoff on failures.
  * @return {{BTC: number, ETH: number, SOL: number}}
  */
 function fetchPrices() {
-  const url = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd';
-  const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-  if (response.getResponseCode() !== 200) {
-    throw new Error('CoinGecko request failed with HTTP ' + response.getResponseCode());
-  }
-  const data = JSON.parse(response.getContentText());
-  return {
-    BTC: data.bitcoin.usd,
-    ETH: data.ethereum.usd,
-    SOL: data.solana.usd
-  };
+  const prices = {};
+  const base = 'https://api.coinbase.com/v2/prices/';
+  const maxAttempts = 3;
+
+  CRYPTO_IDS.forEach(id => {
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+      try {
+        const url = base + id + '-USD/spot';
+        const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+        if (resp.getResponseCode() === 200) {
+          const json = JSON.parse(resp.getContentText());
+          prices[id] = parseFloat(json.data.amount);
+          break; // success
+        }
+        throw new Error('HTTP ' + resp.getResponseCode());
+      } catch (err) {
+        attempt++;
+        if (attempt >= maxAttempts) {
+          throw new Error('Failed to fetch ' + id + ' price: ' + err);
+        }
+        // Exponential backoff: 1s, 2s, 4s
+        Utilities.sleep(Math.pow(2, attempt - 1) * 1000);
+      }
+    }
+  });
+
+  return prices;
 }
 
 // -----------------------------------------------------------------------------
@@ -51,23 +73,19 @@ function fetchPrices() {
 function logPrices(sheetName, prices) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(sheetName);
+
+  // Create the sheet if it does not exist
   if (!sheet) {
     sheet = ss.insertSheet(sheetName);
-    sheet.getRange(1, 1, 1, DATA_HEADERS.length)
-      .setValues([DATA_HEADERS])
-      .setFontWeight('bold');
   }
 
-  const headers = sheet.getRange(1, 1, 1, DATA_HEADERS.length).getValues()[0];
-  if (headers.join() !== DATA_HEADERS.join()) {
-    sheet.clear();
-    sheet.getRange(1, 1, 1, DATA_HEADERS.length)
-      .setValues([DATA_HEADERS])
-      .setFontWeight('bold');
+  // Initialize header row when sheet is empty
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(DATA_HEADERS);
   }
 
-  const ts = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
-  sheet.appendRow([ts, prices.BTC, prices.ETH, prices.SOL]);
+  // Append the latest timestamp and price values
+  sheet.appendRow([new Date(), prices.BTC, prices.ETH, prices.SOL]);
 }
 
 // -----------------------------------------------------------------------------
@@ -82,8 +100,11 @@ function fetchAndLogPrices() {
     const prices = fetchPrices();
     logPrices(DATA_SHEET_NAME, prices);
   } catch (err) {
-    const user = Session.getEffectiveUser().getEmail();
-    MailApp.sendEmail(user, 'Crypto price logger error', String(err));
+    MailApp.sendEmail(
+      Session.getEffectiveUser(),
+      'Crypto price logger error',
+      String(err)
+    );
     throw err;
   }
 }
@@ -93,10 +114,21 @@ function fetchAndLogPrices() {
  */
 function installTriggers() {
   const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(t => ScriptApp.deleteTrigger(t));
+
+  // Remove all existing time-driven triggers
+  triggers.forEach(t => {
+    if (t.getEventType() === ScriptApp.EventType.CLOCK) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+
+  // Create new trigger that runs every 2 hours
   ScriptApp.newTrigger('fetchAndLogPrices')
     .timeBased()
     .everyHours(2)
     .create();
 }
+
+// After deploying, run installTriggers() manually once to start
+// the automated 2h price logging.
 
