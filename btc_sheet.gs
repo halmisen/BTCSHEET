@@ -1,27 +1,36 @@
-// Google Apps Script to fetch crypto prices and manage a simple trade ledger
+// Google Apps Script integrating Binance to Google Sheets add-on
+// and providing a simple two-sheet trading workflow.
 
 /**
- * Initial setup: creates sheets and a time-driven trigger.
- * Run this once manually.
+ * Creates the "Data" and "ledger" sheets, inserts headers,
+ * adds a 2‑hour trigger for updateData() and runs it once.
  */
 function setup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Ensure "data" sheet exists with headers
-  var dataSheet = ss.getSheetByName('data');
+  // Setup Data sheet
+  var dataSheet = ss.getSheetByName('Data');
   if (!dataSheet) {
-    dataSheet = ss.insertSheet('data');
-    dataSheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL']);
+    dataSheet = ss.insertSheet('Data');
   }
+  var dataHeaders = [['Timestamp', 'BTC', 'ETH', 'SOL']];
+  dataSheet.clear();
+  dataSheet.getRange(1, 1, 1, dataHeaders[0].length)
+    .setValues(dataHeaders)
+    .setFontWeight('bold');
 
-  // Ensure "ledger" sheet exists with headers
+  // Setup ledger sheet
   var ledgerSheet = ss.getSheetByName('ledger');
   if (!ledgerSheet) {
     ledgerSheet = ss.insertSheet('ledger');
-    ledgerSheet.appendRow(['Timestamp', 'Asset', 'Action', 'Quantity', 'Price', 'Running P&L']);
   }
+  var ledgerHeaders = [['Timestamp', 'Asset', 'Action', 'Quantity', 'Price', 'Running P&L']];
+  ledgerSheet.clear();
+  ledgerSheet.getRange(1, 1, 1, ledgerHeaders[0].length)
+    .setValues(ledgerHeaders)
+    .setFontWeight('bold');
 
-  // Create a trigger to update data every 2 hours if not already present
+  // Create time-driven trigger if not already present
   var exists = ScriptApp.getProjectTriggers().some(function(t) {
     return t.getHandlerFunction() === 'updateData';
   });
@@ -34,138 +43,110 @@ function setup() {
 }
 
 /**
- * Main function to fetch latest prices and update the data sheet.
- * Also recalculates ledger P&L after updating prices.
+ * Fetches last 24h of 2h OHLCV data from Binance for BTC, ETH and SOL,
+ * writes it to the Data sheet and recalculates P&L.
  */
 function updateData() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('data');
+  var sheet = ss.getSheetByName('Data');
   if (!sheet) {
-    sheet = ss.insertSheet('data');
-    sheet.appendRow(['Timestamp', 'BTC', 'ETH', 'SOL']);
+    SpreadsheetApp.getActive().toast('Data sheet missing - run setup()', 'Error', 5);
+    return;
   }
 
-  // Clear previous data (but keep headers)
-  if (sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).clearContent();
-  }
+  var symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+  var rows = [];
 
   try {
-    var end = new Date();
-    var start = new Date(end.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+    symbols.forEach(function(sym, idx) {
+      var data = BINANCE('history', sym, 'interval: 2h, limit: 12');
+      if (!data || !data.length) throw new Error('No data for ' + sym);
 
-    // Fetch candles for each asset
-    var btc = getCandles('BTC-USD', start, end);
-    var eth = getCandles('ETH-USD', start, end);
-    var sol = getCandles('SOL-USD', start, end);
-
-    // Build a map of timestamp -> prices
-    var map = {};
-    [btc, eth, sol].forEach(function(list, idx) {
-      var name = idx === 0 ? 'BTC' : idx === 1 ? 'ETH' : 'SOL';
-      list.forEach(function(rec) {
-        var ts = rec[0].getTime();
-        if (!map[ts]) {
-          map[ts] = {timestamp: rec[0]};
-        }
-        map[ts][name] = rec[1];
+      data.forEach(function(rec, i) {
+        var ts = new Date(rec[0]);
+        var iso = Utilities.formatDate(ts, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss'Z'");
+        if (!rows[i]) rows[i] = [iso, '', '', ''];
+        rows[i][idx + 1] = rec[4]; // close price
       });
+
+      Utilities.sleep(1100); // avoid rate limit
     });
 
-    // Convert map to sorted rows
-    var rows = Object.keys(map).sort().map(function(key) {
-      var item = map[key];
-      return [
-        Utilities.formatDate(item.timestamp, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'),
-        item.BTC || '',
-        item.ETH || '',
-        item.SOL || ''
-      ];
-    });
-
-    if (rows.length > 0) {
+    sheet.getRange(2, 1, 999, 4).clearContent();
+    if (rows.length) {
       sheet.getRange(2, 1, rows.length, 4).setValues(rows);
     }
   } catch (e) {
-    // Show error message in sheet
-    sheet.getRange(2, 1).setValue('Error: ' + e.message);
+    Logger.log('updateData error: ' + e.toString());
+    SpreadsheetApp.getActive().toast('updateData error: ' + e.message, 'Error', 5);
   }
 
-  // Format headers and columns
-  sheet.getRange(1, 1, 1, 4).setFontWeight('bold');
-  sheet.autoResizeColumns(1, 4);
-
-  // Recalculate P&L with updated prices
   calculatePNL();
 }
 
 /**
- * Fetch candle data for a product between start and end dates.
- * Returns an array of [Date, closePrice].
- */
-function getCandles(productId, start, end) {
-  var url = 'https://api.exchange.coinbase.com/products/' + productId +
-            '/candles?granularity=7200&start=' + start.toISOString() +
-            '&end=' + end.toISOString();
-  var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
-  if (response.getResponseCode() !== 200) {
-    throw new Error('API request failed for ' + productId + ': ' + response.getContentText());
-  }
-  var data = JSON.parse(response.getContentText());
-  data.sort(function(a, b) { return a[0] - b[0]; });
-  return data.map(function(row) {
-    return [new Date(row[0] * 1000), row[4]]; // timestamp and closing price
-  });
-}
-
-/**
- * Calculate running P&L for the ledger based on latest prices.
+ * Calculates running P&L for trades recorded in the ledger using FIFO.
  */
 function calculatePNL() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var ledger = ss.getSheetByName('ledger');
-  var dataSheet = ss.getSheetByName('data');
-  if (!ledger || ledger.getLastRow() < 2 || !dataSheet || dataSheet.getLastRow() < 2) {
-    return;
+  if (!ledger || ledger.getLastRow() < 2) return;
+
+  var dataSheet = ss.getSheetByName('Data');
+  var prices = { BTC: 0, ETH: 0, SOL: 0 };
+  if (dataSheet && dataSheet.getLastRow() >= 2) {
+    var p = dataSheet.getRange(dataSheet.getLastRow(), 2, 1, 3).getValues()[0];
+    prices = { BTC: parseFloat(p[0]) || 0, ETH: parseFloat(p[1]) || 0, SOL: parseFloat(p[2]) || 0 };
   }
 
-  // Latest prices from the data sheet
-  var lastRow = dataSheet.getLastRow();
-  var pricesRow = dataSheet.getRange(lastRow, 2, 1, 3).getValues()[0];
-  var prices = { BTC: pricesRow[0], ETH: pricesRow[1], SOL: pricesRow[2] };
-
-  // Read ledger entries
   var entries = ledger.getRange(2, 1, ledger.getLastRow() - 1, 5).getValues();
+  var lots = { BTC: [], ETH: [], SOL: [] };
+  var realized = { BTC: 0, ETH: 0, SOL: 0 };
   var results = [];
-  var holdings = { BTC: 0, ETH: 0, SOL: 0 };
-  var costs = { BTC: 0, ETH: 0, SOL: 0 };
-  var realized = 0;
-  var totalBuys = 0;
+  var totalCost = 0;
 
-  entries.forEach(function(row) {
-    var asset = row[1];
-    var action = row[2];
-    var qty = parseFloat(row[3]) || 0;
-    var price = parseFloat(row[4]) || 0;
+  entries.forEach(function(r) {
+    var asset = (r[1] || '').toUpperCase();
+    var action = (r[2] || '').toLowerCase();
+    var qty = parseFloat(r[3]) || 0;
+    var price = parseFloat(r[4]) || 0;
+    if (!asset || !qty || !price) {
+      results.push(['']);
+      return;
+    }
 
-    if (action === 'Buy') {
-      holdings[asset] += qty;
-      costs[asset] += qty * price;
-      totalBuys += qty * price;
-    } else if (action === 'Sell') {
-      var avgCost = holdings[asset] ? costs[asset] / holdings[asset] : 0;
-      realized += qty * (price - avgCost);
-      costs[asset] -= avgCost * qty;
-      holdings[asset] -= qty;
+    if (action === 'buy') {
+      lots[asset].push({ qty: qty, price: price });
+      totalCost += qty * price;
+    } else if (action === 'sell') {
+      var remaining = qty;
+      var cost = 0;
+      while (remaining > 0 && lots[asset].length) {
+        var lot = lots[asset][0];
+        var take = Math.min(lot.qty, remaining);
+        cost += take * lot.price;
+        lot.qty -= take;
+        if (lot.qty <= 0) lots[asset].shift();
+        remaining -= take;
+      }
+      realized[asset] += qty * price - cost;
     }
 
     var unrealized = 0;
-    for (var a in holdings) {
-      if (holdings[a]) {
-        unrealized += holdings[a] * prices[a] - costs[a];
+    Object.keys(lots).forEach(function(key) {
+      var qtyHeld = 0;
+      var costHeld = 0;
+      lots[key].forEach(function(l) {
+        qtyHeld += l.qty;
+        costHeld += l.qty * l.price;
+      });
+      if (qtyHeld) {
+        unrealized += qtyHeld * (prices[key] || 0) - costHeld;
       }
-    }
-    results.push([realized + unrealized]);
+    });
+
+    var totalReal = realized.BTC + realized.ETH + realized.SOL;
+    results.push([totalReal + unrealized]);
   });
 
   if (results.length) {
@@ -173,21 +154,50 @@ function calculatePNL() {
   }
 
   var finalPnL = results.length ? results[results.length - 1][0] : 0;
-  var returnPct = totalBuys ? (finalPnL / totalBuys) * 100 : 0;
-  ledger.getRange(results.length + 3, 5, 1, 2).setValues([[
-    'Total Return %', returnPct
-  ]]);
+  var returnPct = totalCost ? (finalPnL / totalCost) * 100 : 0;
+  ledger.getRange(results.length + 3, 5, 1, 2)
+    .setValues([[ 'Total Return %', returnPct ]]);
 
-  // Formatting
   ledger.getRange(1, 1, 1, 6).setFontWeight('bold');
   ledger.autoResizeColumns(1, 6);
 }
 
 /**
- * Triggered when the ledger sheet is edited to keep P&L updated.
+ * Adds a custom menu prompting for authorization if needed.
+ */
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  var menu = ui.createMenu('Crypto Sheets');
+  var needAuth = false;
+  try {
+    BINANCE('version');
+  } catch (e) {
+    needAuth = true;
+  }
+  if (needAuth) {
+    menu.addItem('Authorize add-on!', 'authorizeAddon');
+  }
+  menu.addToUi();
+}
+
+/**
+ * Simple wrapper to trigger the Binance authorization flow.
+ */
+function authorizeAddon() {
+  try {
+    BINANCE('ping');
+  } catch (e) {
+    SpreadsheetApp.getActive().toast('Authorization required: ' + e.message, 'BINANCE', 5);
+  }
+}
+
+/**
+ * Recalculates P&L when the ledger sheet is edited.
  */
 function onEdit(e) {
   if (e && e.range && e.range.getSheet().getName() === 'ledger') {
     calculatePNL();
   }
 }
+
+// Run setup() once manually, then click Crypto Sheets → Authorize add-on! to grant permissions.
